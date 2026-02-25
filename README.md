@@ -6,6 +6,14 @@ This is a port of [AmblyoBye](https://github.com/alexmuraru27/AmblyoBye) by Alex
 
 ---
 
+## Why Pico G2 4K?
+
+The Pico G2 4K is the [VR headset qualified to work with Luminopia](https://www.luminopia.com/patient-support) — the first FDA-cleared binocular treatment for amblyopia. This makes it a proven, clinically validated platform for dichoptic therapy.
+
+AmblyoBye provides a free, open-source alternative to Luminopia's commercial software using the same headset.
+
+---
+
 ## Purpose
 
 AmblyoBye is inspired by research indicating that dichoptic movie viewing can enhance visual function in amblyopic patients, even beyond the critical period of visual development.
@@ -151,6 +159,21 @@ Supported formats: `.asf`, `.avi`, `.dv`, `.m4v`, `.mp4`, `.mov`, `.mpg`, `.mpeg
 
 > For best compatibility, convert videos to **MP4 (H.264, AAC audio)** using [HandBrake](https://handbrake.fr/) or similar tools.
 
+### CLI helper — `pico.sh`
+
+The included `pico.sh` script wraps common ADB/Unity commands:
+
+```bash
+./pico.sh build           # Build APK via Unity CLI
+./pico.sh deploy          # Build + install + launch (one command)
+./pico.sh update          # Install/update APK on device
+./pico.sh upload all      # Sync all videos from videos/ folder to device
+./pico.sh upload movie.mp4  # Upload a single video
+./pico.sh launch          # Launch app on device
+```
+
+Put your video files in the `videos/` folder, then run `./pico.sh upload all` to sync them to the headset.
+
 ---
 
 ## Architecture (for developers)
@@ -234,4 +257,4 @@ This project is a fork of [AmblyoBye](https://github.com/alexmuraru27/AmblyoBye)
 ## Contact
 
 - Original project: [amblyobye@gmail.com](mailto:amblyobye@gmail.com)
-- Pico G2 port: [talipov.mars@gmail.com](mailto:talipov.mars@gmail.com) / [github.com/tmars/AmblyoBye](https://github.com/tmars/AmblyoBye)
+- Pico G2 port: [talipov.mars@gmail.com](mailto:talipov.mars@gmail.com) / [github.com/tmars/AmblyoBye_PicoG2](https://github.com/tmars/AmblyoBye_PicoG2)
