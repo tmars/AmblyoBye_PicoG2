@@ -10,18 +10,19 @@ public class PicoTouchpadClick : MonoBehaviour
 {
     void Update()
     {
-        bool touchpadPressed = false;
+        // Headset body button (Escape) OR controller touchpad
+        bool touchpadPressed = Input.GetKeyDown(KeyCode.Escape);
 
 #if !UNITY_EDITOR && UNITY_ANDROID
         try
         {
-            touchpadPressed = Pvr_UnitySDKAPI.Controller.UPvr_GetKeyDown(0, Pvr_UnitySDKAPI.Pvr_KeyCode.TOUCHPAD);
+            touchpadPressed = touchpadPressed || Pvr_UnitySDKAPI.Controller.UPvr_GetKeyDown(0, Pvr_UnitySDKAPI.Pvr_KeyCode.TOUCHPAD);
             if (!touchpadPressed)
                 touchpadPressed = Pvr_UnitySDKAPI.Controller.UPvr_GetKeyDown(1, Pvr_UnitySDKAPI.Pvr_KeyCode.TOUCHPAD);
         }
         catch { }
 #else
-        touchpadPressed = Input.GetKeyDown(KeyCode.Space);
+        touchpadPressed = touchpadPressed || Input.GetKeyDown(KeyCode.Space);
 #endif
 
         if (touchpadPressed)

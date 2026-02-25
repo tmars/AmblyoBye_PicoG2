@@ -56,6 +56,23 @@ public class DichopticMovieSceneManager : MonoBehaviour
     [SerializeField]
     public TextMeshProUGUI distanceText;
 
+    [SerializeField]
+    public TextMeshProUGUI ipdText;
+
+    [SerializeField]
+    public TextMeshProUGUI debugKeyText;
+
+    // --- Video Picker ---
+    [SerializeField] public GameObject videoPickerPanel;
+    [SerializeField] public TextMeshProUGUI videoPickerPageLabel;
+    [SerializeField] public GameObject[] videoPickerSlots;
+
+    private List<string> pickerVideoList = new List<string>();
+    private int pickerPage = 0;
+    private const int PICKER_PAGE_SIZE = 5;
+
+    private float currentIPD = 62.5f; // in mm
+
     private float sessionSecondsWatched = 0f;
     private float blobTimerDuration = 10;
     private bool wasMenuButtonPressed = false;
@@ -63,6 +80,9 @@ public class DichopticMovieSceneManager : MonoBehaviour
     private DichopticMovieSettingsManager settingsManager = null;
 
     private DailyUsageTracker usageTracker = null;
+    private string currentVideoPath = "";
+    private float savePositionTimer = 0f;
+    private const float SAVE_INTERVAL = 5f; // save every 5 seconds
 
     void Awake()
     {
@@ -76,30 +96,45 @@ public class DichopticMovieSceneManager : MonoBehaviour
         UpdateTimeWatchedText(0);
         RestoreInitialSettingsFromPersistance();
         PopulateMovieDropdown();
+        PopulateVideoPicker();
         StartCoroutine(RunBlobChangeTimer());
         AutoPlayFirstVideo();
     }
 
+    private const string LAST_VIDEO_FILE = "LastVideo.txt";
+
     private void AutoPlayFirstVideo()
     {
-        // Auto-play first available video if any
-        if (movieListDropdown.options.Count > 1)
+        // Try to restore last played video
+        var result = StorageHandler.ReadFile(TypeSafeDir.Settings, LAST_VIDEO_FILE);
+        if (result.Item1 && !string.IsNullOrEmpty(result.Item2))
         {
-            movieListDropdown.value = 1; // Select first real video (index 0 is empty)
-            movieListDropdown.RefreshShownValue();
-            LoadMovieButtonHandle();
+            string lastFile = result.Item2.Trim();
+            foreach (string path in pickerVideoList)
+            {
+                if (System.IO.Path.GetFileName(path) == lastFile)
+                {
+                    LoadMovieByPath(path);
+                    return;
+                }
+            }
         }
+
+        // Fallback: first video
+        if (pickerVideoList.Count > 0)
+            LoadMovieByPath(pickerVideoList[0]);
     }
 
     void Update()
     {
         UpdateCamera();
 
-        // Pico G2 3DoF controller: TOUCHPAD toggles settings UI or clicks UI elements
+        // Pico G2: TOUCHPAD (controller) or Escape (headset body button) toggles settings / clicks
+        bool isTouchpadPressed = UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Escape);
 #if !UNITY_EDITOR && UNITY_ANDROID
-        bool isTouchpadPressed = Pvr_UnitySDKAPI.Controller.UPvr_GetKey(0, Pvr_UnitySDKAPI.Pvr_KeyCode.TOUCHPAD);
+        try { isTouchpadPressed = isTouchpadPressed || Pvr_UnitySDKAPI.Controller.UPvr_GetKey(0, Pvr_UnitySDKAPI.Pvr_KeyCode.TOUCHPAD); } catch {}
 #else
-        bool isTouchpadPressed = UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Space);
+        isTouchpadPressed = isTouchpadPressed || UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Space);
 #endif
         if (isTouchpadPressed && !wasMenuButtonPressed)
         {
@@ -107,6 +142,7 @@ public class DichopticMovieSceneManager : MonoBehaviour
             {
                 // Menu hidden → show it
                 settingsUI.SetActive(true);
+                VRUISetup.Instance?.SetReticleVisible(true);
             }
             else
             {
@@ -118,6 +154,7 @@ public class DichopticMovieSceneManager : MonoBehaviour
                 if (!gazingAtUI)
                 {
                     settingsUI.SetActive(false);
+                    VRUISetup.Instance?.SetReticleVisible(false);
                 }
             }
         }
@@ -128,8 +165,108 @@ public class DichopticMovieSceneManager : MonoBehaviour
             usageTracker?.Tick(Time.deltaTime);
             sessionSecondsWatched += Time.deltaTime;
             UpdateTimeWatchedText((int)sessionSecondsWatched);
+
+            // Periodically save video position
+            savePositionTimer += Time.deltaTime;
+            if (savePositionTimer >= SAVE_INTERVAL)
+            {
+                savePositionTimer = 0f;
+                SaveVideoPosition();
+            }
         }
         UpdateVideoTimeText();
+        DetectKeyPress();
+    }
+
+    private int debugKeyCounter = 0;
+
+    private void DetectKeyPress()
+    {
+        if (debugKeyText == null) return;
+
+        // Method 1: Unity KeyCodes
+        if (Input.anyKeyDown)
+        {
+            foreach (KeyCode kc in System.Enum.GetValues(typeof(KeyCode)))
+            {
+                if (Input.GetKeyDown(kc))
+                {
+                    debugKeyCounter++;
+                    debugKeyText.text = debugKeyCounter + " Unity: " + kc + " (" + (int)kc + ")";
+                    Debug.Log("[KEY] Unity KeyCode: " + kc + " code=" + (int)kc);
+                }
+            }
+        }
+
+        // Method 2: Touch on headset
+        if (Input.touchCount > 0)
+        {
+            var t = Input.GetTouch(0);
+            if (t.phase == TouchPhase.Began)
+            {
+                debugKeyCounter++;
+                debugKeyText.text = debugKeyCounter + " Touch: " + t.position;
+                Debug.Log("[KEY] Touch: " + t.position);
+            }
+        }
+
+        // Method 3: Mouse button (some HMD buttons map as mouse)
+        for (int i = 0; i < 3; i++)
+        {
+            if (Input.GetMouseButtonDown(i))
+            {
+                debugKeyCounter++;
+                debugKeyText.text = debugKeyCounter + " Mouse: btn" + i;
+                Debug.Log("[KEY] Mouse button: " + i);
+            }
+        }
+
+        // Method 4: Pico controller keys (both hands)
+#if !UNITY_EDITOR && UNITY_ANDROID
+        try
+        {
+            var allKeys = (Pvr_UnitySDKAPI.Pvr_KeyCode[])System.Enum.GetValues(typeof(Pvr_UnitySDKAPI.Pvr_KeyCode));
+            for (int hand = 0; hand <= 1; hand++)
+            {
+                foreach (var pk in allKeys)
+                {
+                    if (Pvr_UnitySDKAPI.Controller.UPvr_GetKeyDown(hand, pk))
+                    {
+                        debugKeyCounter++;
+                        debugKeyText.text = debugKeyCounter + " Pico[" + hand + "]: " + pk;
+                        Debug.Log("[KEY] Pico hand=" + hand + " key=" + pk);
+                    }
+                }
+            }
+        }
+        catch {}
+
+        // Method 5: Android native key events via JNI
+        try
+        {
+            using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+            {
+                var activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
+                // Check common Android keycodes via InputDevice
+                // This is just for detection - poll via KeyEvent isn't ideal,
+                // but Input.anyKeyDown above should catch most
+            }
+        }
+        catch {}
+#endif
+    }
+
+    // Method 6: OnGUI catches events that Update() might miss
+    private void OnGUI()
+    {
+        if (debugKeyText == null) return;
+        Event e = Event.current;
+        if (e != null && e.isKey && e.type == EventType.KeyDown)
+        {
+            debugKeyCounter++;
+            debugKeyText.text = debugKeyCounter + " GUI: " + e.keyCode + " (" + (int)e.keyCode + ")";
+            Debug.Log("[KEY] OnGUI KeyCode: " + e.keyCode + " code=" + (int)e.keyCode);
+        }
     }
 
     private void UpdateVideoTimeText()
@@ -161,7 +298,8 @@ public class DichopticMovieSceneManager : MonoBehaviour
                                                     blobScaleSlider.GetComponent<Slider>().value,
                                                     blobGrayColorSlider.GetComponent<Slider>().value,
                                                     blobTimerSlider.GetComponent<Slider>().value,
-                                                    DISTANCE_TO_SCREEN_IN_M);
+                                                    DISTANCE_TO_SCREEN_IN_M,
+                                                    currentIPD);
         settingsManager.TryRestore();
         RestoreSettingsPanelFromManager(settingsManager);
 
@@ -171,6 +309,14 @@ public class DichopticMovieSceneManager : MonoBehaviour
         {
             DISTANCE_TO_SCREEN_IN_M = savedDist;
             MoveScreenToDistance();
+        }
+
+        // Restore IPD
+        float savedIPD = settingsManager.GetIPD();
+        if (savedIPD != currentIPD)
+        {
+            currentIPD = savedIPD;
+            ApplyIPD();
         }
     }
 
@@ -200,11 +346,13 @@ public class DichopticMovieSceneManager : MonoBehaviour
 
     private void ResetSettings()
     {
-        settingsManager = new DichopticMovieSettingsManager(0.5F, 1.0F, 70.0F, 5.0F, 2.0F);
+        settingsManager = new DichopticMovieSettingsManager(0.5F, 1.0F, 70.0F, 5.0F, 2.0F, 62.5F);
         settingsManager.StoreSettings();
         RestoreSettingsPanelFromManager(settingsManager);
         DISTANCE_TO_SCREEN_IN_M = 2.0f;
         MoveScreenToDistance();
+        currentIPD = 62.5f;
+        ApplyIPD();
     }
 
     private void RestoreSettingsPanelFromManager(DichopticMovieSettingsManager settingsManager)
@@ -213,6 +361,12 @@ public class DichopticMovieSceneManager : MonoBehaviour
         HandleChangeBlobScale(settingsManager.GetBlobScaleValue());
         HandleChangeBlobGreyValue(settingsManager.GetBlobGreyColorValue());
         HandleChangeBlobTimerValue(settingsManager.GetBlobTimerValue());
+    }
+
+    public void RefreshVideoList()
+    {
+        PopulateMovieDropdown();
+        PopulateVideoPicker();
     }
 
     private void PopulateMovieDropdown()
@@ -380,6 +534,52 @@ public class DichopticMovieSceneManager : MonoBehaviour
             distanceText.text = DISTANCE_TO_SCREEN_IN_M.ToString("0.00") + "m";
     }
 
+    // ---- IPD controls ----
+    public void IPDIncrease()
+    {
+        currentIPD = Mathf.Min(70f, currentIPD + 1f);
+        settingsManager?.SetIPD(currentIPD);
+        ApplyIPD();
+    }
+
+    public void IPDDecrease()
+    {
+        currentIPD = Mathf.Max(45f, currentIPD - 1f);
+        settingsManager?.SetIPD(currentIPD);
+        ApplyIPD();
+    }
+
+    private void ApplyIPD()
+    {
+        float ipdMeters = currentIPD / 1000f;
+
+        // Try SDK API first
+#if !UNITY_EDITOR && UNITY_ANDROID
+        try { Pvr_UnitySDKAPI.System.UPvr_SetIPD(ipdMeters); } catch {}
+#endif
+
+        // Also directly set eye offsets on Pvr_UnitySDKManager (guaranteed to work)
+        if (Pvr_UnitySDKManager.SDK != null)
+        {
+            Pvr_UnitySDKManager.SDK.leftEyeOffset = new Vector3(-ipdMeters / 2f, 0, 0);
+            Pvr_UnitySDKManager.SDK.rightEyeOffset = new Vector3(ipdMeters / 2f, 0, 0);
+
+            // Update each eye camera position
+            var eyeManager = Pvr_UnitySDKEyeManager.Instance;
+            if (eyeManager != null && eyeManager.Eyes != null)
+            {
+                for (int i = 0; i < eyeManager.Eyes.Length; i++)
+                {
+                    eyeManager.Eyes[i].RefreshCameraPosition(ipdMeters);
+                }
+            }
+        }
+
+        if (ipdText != null)
+            ipdText.text = currentIPD.ToString("0") + " mm";
+        Debug.Log("[DichopticScene] IPD set to: " + currentIPD + "mm (" + ipdMeters + "m)");
+    }
+
     // ---- Seek controls ----
     private void SeekVideo(double seconds)
     {
@@ -401,6 +601,40 @@ public class DichopticMovieSceneManager : MonoBehaviour
     public void SeekFwd5m()   { SeekVideo(300); }
     public void SeekFwd10m()  { SeekVideo(600); }
 
+    public void LoadMovieByPath(string filepath)
+    {
+        // Save position of previous video before switching
+        SaveVideoPosition();
+
+        currentVideoPath = filepath;
+        videoPlayer.source = VideoSource.Url;
+        videoPlayer.audioOutputMode = VideoAudioOutputMode.Direct;
+        videoPlayer.controlledAudioTrackCount = 1;
+        videoPlayer.GetComponent<AudioSource>().volume = 1.0f;
+        videoPlayer.url = filepath;
+
+        // Restore saved position after video is prepared
+        double savedPos = GetSavedPosition(filepath);
+        if (savedPos > 1.0)
+        {
+            VideoPlayer.EventHandler handler = null;
+            handler = (vp) =>
+            {
+                vp.prepareCompleted -= handler;
+                if (savedPos < vp.length - 5)
+                    vp.time = savedPos;
+            };
+            videoPlayer.prepareCompleted += handler;
+        }
+
+        videoPlayer.Play();
+        settingsUI.SetActive(false);
+        VRUISetup.Instance?.SetReticleVisible(false);
+
+        // Save last played video
+        StorageHandler.WriteFile(TypeSafeDir.Settings, LAST_VIDEO_FILE, System.IO.Path.GetFileName(filepath));
+    }
+
     public void LoadMovieButtonHandle()
     {
         string selectedFilename = movieListDropdown.captionText.text;
@@ -411,15 +645,89 @@ public class DichopticMovieSceneManager : MonoBehaviour
             {
                 if (filepath.Contains(selectedFilename))
                 {
-                    videoPlayer.source = VideoSource.Url;
-                    videoPlayer.audioOutputMode = VideoAudioOutputMode.Direct;
-                    videoPlayer.controlledAudioTrackCount = 1;
-                    videoPlayer.GetComponent<AudioSource>().volume = 1.0f;
-                    videoPlayer.url = filepath;
-                    videoPlayer.Play();
-                    settingsUI.SetActive(false);
+                    LoadMovieByPath(filepath);
                     break;
                 }
+            }
+        }
+    }
+
+    // --- Video Picker ---
+    public void ShowVideoPicker()
+    {
+        PopulateVideoPicker();
+        if (videoPickerPanel != null) videoPickerPanel.SetActive(true);
+    }
+
+    public void HideVideoPicker()
+    {
+        if (videoPickerPanel != null) videoPickerPanel.SetActive(false);
+    }
+
+    public void VideoPickerNextPage()
+    {
+        int maxPage = pickerVideoList.Count == 0 ? 0 : (pickerVideoList.Count - 1) / PICKER_PAGE_SIZE;
+        pickerPage = Mathf.Min(pickerPage + 1, maxPage);
+        RefreshPickerPage();
+    }
+
+    public void VideoPickerPrevPage()
+    {
+        pickerPage = Mathf.Max(pickerPage - 1, 0);
+        RefreshPickerPage();
+    }
+
+    public void VideoPickerSelect0() { VideoPickerSelectSlot(0); }
+    public void VideoPickerSelect1() { VideoPickerSelectSlot(1); }
+    public void VideoPickerSelect2() { VideoPickerSelectSlot(2); }
+    public void VideoPickerSelect3() { VideoPickerSelectSlot(3); }
+    public void VideoPickerSelect4() { VideoPickerSelectSlot(4); }
+
+    private void VideoPickerSelectSlot(int slotIndex)
+    {
+        int idx = pickerPage * PICKER_PAGE_SIZE + slotIndex;
+        if (idx < pickerVideoList.Count)
+        {
+            LoadMovieByPath(pickerVideoList[idx]);
+            HideVideoPicker();
+        }
+    }
+
+    private void PopulateVideoPicker()
+    {
+        StorageHandler.InitDirectoryTree();
+        var allFiles = StorageHandler.GetFilePathsFromDir(TypeSafeDir.Movies);
+        var allowed = new System.Collections.Generic.HashSet<string>
+            { ".asf", ".avi", ".dv", ".m4v", ".mp4", ".mov", ".mpg", ".mpeg", ".ogv", ".vp8", ".webm", ".wmv" };
+        pickerVideoList = new List<string>();
+        foreach (var f in allFiles)
+            if (allowed.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                pickerVideoList.Add(f);
+        pickerVideoList.Sort(StringComparer.OrdinalIgnoreCase);
+        pickerPage = 0;
+        RefreshPickerPage();
+    }
+
+    private void RefreshPickerPage()
+    {
+        if (videoPickerSlots == null) return;
+        int total = pickerVideoList.Count;
+        int maxPage = total == 0 ? 0 : (total - 1) / PICKER_PAGE_SIZE;
+        if (videoPickerPageLabel != null)
+            videoPickerPageLabel.text = total == 0 ? "Нет видео" : (pickerPage + 1) + " / " + (maxPage + 1);
+        for (int i = 0; i < videoPickerSlots.Length; i++)
+        {
+            if (videoPickerSlots[i] == null) continue;
+            int idx = pickerPage * PICKER_PAGE_SIZE + i;
+            if (idx < total)
+            {
+                videoPickerSlots[i].SetActive(true);
+                var txt = videoPickerSlots[i].GetComponentInChildren<TextMeshProUGUI>();
+                if (txt != null) txt.text = Path.GetFileNameWithoutExtension(pickerVideoList[idx]);
+            }
+            else
+            {
+                videoPickerSlots[i].SetActive(false);
             }
         }
     }
@@ -444,6 +752,88 @@ public class DichopticMovieSceneManager : MonoBehaviour
             float f2 = (float)(32748 * 2.0 * (random.NextDouble() - 0.5));
             SetMaterialVector("_BlobOffset", new Vector2(f1, f2));
         }
+    }
+
+    // ---- Video position persistence ----
+    private const string VIDEO_POSITIONS_FILE = "VideoPositions.json";
+
+    private void SaveVideoPosition()
+    {
+        if (string.IsNullOrEmpty(currentVideoPath)) return;
+        if (videoPlayer == null || !videoPlayer.isPrepared) return;
+        if (videoPlayer.time < 1.0) return;
+
+        string key = System.IO.Path.GetFileName(currentVideoPath);
+        var positions = LoadPositionsDict();
+        positions[key] = videoPlayer.time.ToString("F1");
+
+        string json = "{";
+        bool first = true;
+        foreach (var kvp in positions)
+        {
+            if (!first) json += ",";
+            json += "\"" + EscapeJson(kvp.Key) + "\":\"" + kvp.Value + "\"";
+            first = false;
+        }
+        json += "}";
+
+        StorageHandler.WriteFile(TypeSafeDir.Settings, VIDEO_POSITIONS_FILE, json);
+    }
+
+    private double GetSavedPosition(string filepath)
+    {
+        string key = System.IO.Path.GetFileName(filepath);
+        var positions = LoadPositionsDict();
+        if (positions.ContainsKey(key))
+        {
+            double val;
+            if (double.TryParse(positions[key], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out val))
+                return val;
+        }
+        return 0;
+    }
+
+    private Dictionary<string, string> LoadPositionsDict()
+    {
+        var dict = new Dictionary<string, string>();
+        var result = StorageHandler.ReadFile(TypeSafeDir.Settings, VIDEO_POSITIONS_FILE);
+        if (result.Item1 && !string.IsNullOrEmpty(result.Item2))
+        {
+            // Simple JSON parse: {"key":"value","key2":"value2"}
+            string json = result.Item2.Trim();
+            if (json.StartsWith("{") && json.EndsWith("}"))
+            {
+                json = json.Substring(1, json.Length - 2);
+                string[] pairs = json.Split(',');
+                foreach (string pair in pairs)
+                {
+                    int colon = pair.IndexOf(':');
+                    if (colon > 0)
+                    {
+                        string k = pair.Substring(0, colon).Trim().Trim('"');
+                        string v = pair.Substring(colon + 1).Trim().Trim('"');
+                        dict[k] = v;
+                    }
+                }
+            }
+        }
+        return dict;
+    }
+
+    private string EscapeJson(string s)
+    {
+        return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    }
+
+    void OnApplicationPause(bool pause)
+    {
+        if (pause) SaveVideoPosition();
+    }
+
+    void OnApplicationQuit()
+    {
+        SaveVideoPosition();
     }
 
     private void UpdateCamera()

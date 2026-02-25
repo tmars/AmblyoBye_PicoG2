@@ -10,13 +10,14 @@ public class DichopticMovieSettingsManager
         public float BlobGreyColorValue;
         public float BlobTimerValue;
         public float ScreenDistance;
+        public float IPD;
     }
 
     private const string SETTINGS_FILENAME = "DichopticMovieSettings.cfg";
 
     private DichopticMovieSettingsStruct _dichopticMovieSettings;
 
-    public DichopticMovieSettingsManager(float eyeBiasValue, float blobScaleValue, float blobGreyColorValue, float blobTimerValue, float screenDistance = 2.0f)
+    public DichopticMovieSettingsManager(float eyeBiasValue, float blobScaleValue, float blobGreyColorValue, float blobTimerValue, float screenDistance = 2.0f, float ipd = 62.5f)
     {
         _dichopticMovieSettings = new DichopticMovieSettingsStruct
         {
@@ -25,6 +26,7 @@ public class DichopticMovieSettingsManager
             BlobGreyColorValue = blobGreyColorValue,
             BlobTimerValue = blobTimerValue,
             ScreenDistance = screenDistance,
+            IPD = ipd,
         };
     }
 
@@ -107,5 +109,16 @@ public class DichopticMovieSettingsManager
     public float GetScreenDistance()
     {
         return _dichopticMovieSettings.ScreenDistance > 0.1f ? _dichopticMovieSettings.ScreenDistance : 2.0f;
+    }
+
+    public void SetIPD(float value)
+    {
+        _dichopticMovieSettings.IPD = value;
+        StoreSettings();
+    }
+
+    public float GetIPD()
+    {
+        return _dichopticMovieSettings.IPD > 1f ? _dichopticMovieSettings.IPD : 62.5f;
     }
 }

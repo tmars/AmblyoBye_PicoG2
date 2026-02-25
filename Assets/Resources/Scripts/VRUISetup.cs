@@ -12,11 +12,20 @@ public class VRUISetup : MonoBehaviour
 
     private GameObject reticle;
 
+    public static VRUISetup Instance { get; private set; }
+
+    public void SetReticleVisible(bool visible)
+    {
+        if (reticle != null) reticle.SetActive(visible);
+    }
+
     void Start()
     {
+        Instance = this;
         SetupCanvasCamera();
         SetupEyeIndex();
         CreateReticle();
+        SetReticleVisible(false); // скрыт пока меню закрыто
     }
 
     void SetupEyeIndex()
@@ -72,7 +81,7 @@ public class VRUISetup : MonoBehaviour
         reticle.transform.SetParent(cam.transform);
         reticle.transform.localPosition = new Vector3(0, 0, 1.5f);
         reticle.transform.localRotation = Quaternion.identity;
-        reticle.transform.localScale = new Vector3(0.02f, 0.02f, 0.02f);
+        reticle.transform.localScale = new Vector3(0.005f, 0.005f, 0.005f);
 
         // Remove collider so it doesn't block raycasts
         var col = reticle.GetComponent<Collider>();

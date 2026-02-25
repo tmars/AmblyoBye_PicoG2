@@ -66,6 +66,13 @@ public class SceneBuilderAndBuild
             pvrSDK = (GameObject)PrefabUtility.InstantiatePrefab(pvrPrefab);
             pvrSDK.name = "Pvr_UnitySDK";
             pvrSDK.transform.position = new Vector3(0, 1.6f, 0);
+
+            // Set all cameras to solid black background
+            foreach (var cam in pvrSDK.GetComponentsInChildren<Camera>(true))
+            {
+                cam.clearFlags = CameraClearFlags.SolidColor;
+                cam.backgroundColor = Color.black;
+            }
         }
         else
         {
@@ -88,11 +95,9 @@ public class SceneBuilderAndBuild
             Debug.LogWarning("ControllerManager prefab not found at " + PVR_CONTROLLER_PREFAB);
         }
 
-        // ---- Directional Light ----
-        var light = new GameObject("Directional Light");
-        var lightComp = light.AddComponent<Light>();
-        lightComp.type = LightType.Directional;
-        light.transform.rotation = Quaternion.Euler(50, -30, 0);
+        // ---- No light needed — video is self-lit, black background ----
+        RenderSettings.ambientLight = Color.black;
+        RenderSettings.skybox = null;
 
         // ---- Dichoptic Material ----
         Shader dichopticShader = Shader.Find("Custom/DichopticMovieUnlit");
@@ -142,8 +147,8 @@ public class SceneBuilderAndBuild
             eventSystemObj.AddComponent<UnityEngine.EventSystems.EventSystem>();
         }
         var gazeInput = eventSystemObj.AddComponent<Pvr_GazeInputModule>();
-        gazeInput.mode = Pvr_GazeInputModule.Mode.Gaze;
-        gazeInput.GazeTimeInSeconds = 1.5f;
+        gazeInput.mode = Pvr_GazeInputModule.Mode.Click;
+        gazeInput.GazeTimeInSeconds = 99f;
         eventSystemObj.AddComponent<PicoTouchpadClick>();
 
         // ---- Settings UI Canvas (on top of movie screen) ----
@@ -174,7 +179,7 @@ public class SceneBuilderAndBuild
 
         // Background panel
         var panel = CreateUIElement<Image>("Panel", canvasObj.transform);
-        panel.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+        panel.color = new Color(0.02f, 0.02f, 0.02f, 0.98f);
         var panelRT = panel.GetComponent<RectTransform>();
         panelRT.anchorMin = Vector2.zero;
         panelRT.anchorMax = Vector2.one;
@@ -189,18 +194,15 @@ public class SceneBuilderAndBuild
         var playedTimeText = CreateTMPText("TotalPlayedTimeText", panel.transform, "Watched: 0h 00 min", 18,
             new Vector2(0.5f, 1), new Vector2(0.5f, 1), new Vector2(0, -10), new Vector2(300, 30));
 
-        // ---- Movie Dropdown ----
+        // ---- Movie Dropdown (hidden, used internally for delete/backward compat) ----
         var dropdownObj = CreateTMPDropdown("MovieDropdown", panel.transform,
             new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 200), new Vector2(400, 40));
+        dropdownObj.SetActive(false);
 
-        // ---- Load Movie Button ----
-        var loadBtn = CreateButton("LoadMovieButton", "Load", panel.transform,
-            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(230, 200), new Vector2(100, 40));
-
-        // ---- Delete Movie Button ----
-        var deleteBtn = CreateButton("DeleteMovieButton", "Delete", panel.transform,
-            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(340, 200), new Vector2(100, 40));
-        deleteBtn.GetComponent<Image>().color = new Color(0.5f, 0.2f, 0.2f, 1f);
+        // ---- Select Video Button (opens picker panel) ----
+        var selectVideoBtn = CreateButton("SelectVideoButton", "Select Video", panel.transform,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 200), new Vector2(300, 45));
+        selectVideoBtn.GetComponent<Image>().color = new Color(0.2f, 0.35f, 0.55f, 1f);
 
         // ---- Eye Bias Slider ----
         var eyeBiasSlider = CreateSliderWithLabel("EyeBiasSlider", "Eye Bias", panel.transform,
@@ -261,18 +263,11 @@ public class SceneBuilderAndBuild
         videoTimeTextObj.alignment = TextAlignmentOptions.Center;
         sceneManager.videoTimeText = videoTimeTextObj;
 
-        // Wire button callbacks via SerializedObject approach
-        // Load movie button -> DichopticMovieSceneManager.LoadMovieButtonHandle
-        var loadBtnComp = loadBtn.GetComponent<Button>();
+        // Select Video button → opens picker
+        var selectVideoBtnComp = selectVideoBtn.GetComponent<Button>();
         UnityEditor.Events.UnityEventTools.AddPersistentListener(
-            loadBtnComp.onClick,
-            new UnityEngine.Events.UnityAction(sceneManager.LoadMovieButtonHandle));
-
-        // Delete movie button
-        var deleteBtnComp = deleteBtn.GetComponent<Button>();
-        UnityEditor.Events.UnityEventTools.AddPersistentListener(
-            deleteBtnComp.onClick,
-            new UnityEngine.Events.UnityAction(sceneManager.DeleteSelectedMovieButtonHandler));
+            selectVideoBtnComp.onClick,
+            new UnityEngine.Events.UnityAction(sceneManager.ShowVideoPicker));
 
         // Reset settings button
         var resetBtnComp = resetBtn.GetComponent<Button>();
@@ -357,6 +352,9 @@ public class SceneBuilderAndBuild
             distFartherComp.onClick,
             new UnityEngine.Events.UnityAction(sceneManager.ScreenFarther));
 
+        // ---- Video Picker Panel (создаётся ПОСЛЕДНИМ — рендерится поверх всех кнопок) ----
+        CreateVideoPickerPanel(panel.transform, sceneManager);
+
         // ---- Save scene ----
         EditorSceneManager.SaveScene(scene, SCENE_PATH);
         AssetDatabase.SaveAssets();
@@ -374,41 +372,32 @@ public class SceneBuilderAndBuild
     [MenuItem("Build/0. Fix Android Tools (run first!)")]
     public static void FixAndroidTools()
     {
-        // Use Unity's embedded OpenJDK 8 (installed via Unity Hub)
-        // This is the most reliable approach for Unity 2021.3
+        string systemSdk = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "/Library/Android/sdk";
+        string systemNdk = "/Users/marseltalipov/Documents/tamerlan/android-ndk-r21d";
+
+        // Set via EditorPrefs (works in Unity 2021.3 batchmode and GUI)
         EditorPrefs.SetBool("JdkUseEmbedded", true);
 
-        // Try embedded SDK & NDK first; fall back to system paths
-        string embeddedAndroidTools = "/Applications/Unity/Hub/Editor/2021.3.0f1/PlaybackEngines/AndroidPlayer/SDK";
-        string embeddedNdk = "/Applications/Unity/Hub/Editor/2021.3.0f1/PlaybackEngines/AndroidPlayer/NDK";
-        string systemSdk = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "/Library/Android/sdk";
-        string systemNdk = "/tmp/ndk-extract/android-ndk-r21d";
-
-        if (System.IO.Directory.Exists(embeddedAndroidTools))
-        {
-            EditorPrefs.SetBool("SdkUseEmbedded", true);
-            Debug.Log("Using embedded Android SDK: " + embeddedAndroidTools);
-        }
-        else
+        if (System.IO.Directory.Exists(systemSdk))
         {
             EditorPrefs.SetBool("SdkUseEmbedded", false);
             EditorPrefs.SetString("AndroidSdkRoot", systemSdk);
-            Debug.Log("Using system Android SDK: " + systemSdk);
+            Debug.Log("Using Android SDK: " + systemSdk);
         }
 
-        if (System.IO.Directory.Exists(embeddedNdk))
-        {
-            EditorPrefs.SetBool("NdkUseEmbedded", true);
-            Debug.Log("Using embedded Android NDK: " + embeddedNdk);
-        }
-        else
+        if (System.IO.Directory.Exists(systemNdk))
         {
             EditorPrefs.SetBool("NdkUseEmbedded", false);
+            EditorPrefs.SetString("AndroidNdkRootR21d", systemNdk);
             EditorPrefs.SetString("AndroidNdkRoot", systemNdk);
-            Debug.Log("Using system Android NDK: " + systemNdk);
+            Debug.Log("Using Android NDK: " + systemNdk);
         }
 
-        Debug.Log("FixAndroidTools complete. JdkUseEmbedded=true");
+        // Also set via Unity Preferences API directly
+        EditorPrefs.SetString("AndroidNdkRootR21", systemNdk);
+
+        Debug.Log("FixAndroidTools complete.");
+        Debug.Log("NDK EditorPrefs check: " + EditorPrefs.GetString("AndroidNdkRootR21d", "NOT SET"));
     }
 
     [MenuItem("Build/2. Build Android APK")]
@@ -422,7 +411,7 @@ public class SceneBuilderAndBuild
         PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
         PlayerSettings.Android.targetSdkVersion = (AndroidSdkVersions)33;
 
-        bool hasNdk = Directory.Exists("/tmp/ndk-extract/android-ndk-r21d");
+        bool hasNdk = Directory.Exists("/Users/marseltalipov/Documents/tamerlan/android-ndk-r21d");
         if (hasNdk)
         {
             PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
@@ -814,5 +803,86 @@ public class SceneBuilderAndBuild
                 typeof(UnityEngine.Events.UnityAction), target, method);
             UnityEditor.Events.UnityEventTools.AddVoidPersistentListener(slider.onValueChanged, action);
         }
+    }
+
+    static void CreateVideoPickerPanel(Transform parent, DichopticMovieSceneManager sceneManager)
+    {
+        // Full-size overlay panel (covers entire settings canvas)
+        var pickerImg = CreateUIElement<Image>("VideoPickerPanel", parent);
+        pickerImg.color = new Color(0.05f, 0.07f, 0.12f, 0.98f);
+        var pickerRT = pickerImg.GetComponent<RectTransform>();
+        pickerRT.anchorMin = Vector2.zero;
+        pickerRT.anchorMax = Vector2.one;
+        pickerRT.offsetMin = Vector2.zero;
+        pickerRT.offsetMax = Vector2.zero;
+        var pickerPanel = pickerImg.gameObject;
+
+        // Title
+        var title = CreateTMPText("PickerTitle", pickerPanel.transform, "Выбор видео", 30,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 240), new Vector2(600, 48));
+        title.alignment = TextAlignmentOptions.Center;
+        title.fontStyle = FontStyles.Bold;
+
+        // Close button (top-right)
+        var closeBtn = CreateButton("PickerCloseBtn", "✕  Закрыть", pickerPanel.transform,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(310, 240), new Vector2(140, 42));
+        closeBtn.GetComponent<Image>().color = new Color(0.5f, 0.15f, 0.15f, 1f);
+        UnityEditor.Events.UnityEventTools.AddPersistentListener(
+            closeBtn.GetComponent<Button>().onClick,
+            new UnityEngine.Events.UnityAction(sceneManager.HideVideoPicker));
+
+        // 5 video slot buttons
+        float[] slotY = { 155f, 90f, 25f, -40f, -105f };
+        string[] slotMethods = { "VideoPickerSelect0", "VideoPickerSelect1", "VideoPickerSelect2", "VideoPickerSelect3", "VideoPickerSelect4" };
+        var slots = new GameObject[5];
+        for (int i = 0; i < 5; i++)
+        {
+            var slotBtn = CreateButton("PickerSlot" + i, "—", pickerPanel.transform,
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, slotY[i]), new Vector2(700, 56));
+            slotBtn.GetComponent<Image>().color = new Color(0.18f, 0.22f, 0.32f, 1f);
+            var slotTmp = slotBtn.GetComponentInChildren<TextMeshProUGUI>();
+            if (slotTmp != null)
+            {
+                slotTmp.fontSize = 20;
+                slotTmp.alignment = TextAlignmentOptions.MidlineLeft;
+                slotTmp.margin = new Vector4(20, 0, 0, 0);
+                slotTmp.overflowMode = TextOverflowModes.Ellipsis;
+            }
+            var slotMethod = typeof(DichopticMovieSceneManager).GetMethod(slotMethods[i]);
+            if (slotMethod != null)
+            {
+                var action = (UnityEngine.Events.UnityAction)System.Delegate.CreateDelegate(
+                    typeof(UnityEngine.Events.UnityAction), sceneManager, slotMethod);
+                UnityEditor.Events.UnityEventTools.AddPersistentListener(slotBtn.GetComponent<Button>().onClick, action);
+            }
+            slots[i] = slotBtn;
+        }
+
+        // Pagination row
+        float pageY = -185f;
+        var prevBtn = CreateButton("PickerPrevPage", "◀", pickerPanel.transform,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(-160, pageY), new Vector2(90, 46));
+        prevBtn.GetComponent<Image>().color = new Color(0.3f, 0.3f, 0.45f, 1f);
+        UnityEditor.Events.UnityEventTools.AddPersistentListener(
+            prevBtn.GetComponent<Button>().onClick,
+            new UnityEngine.Events.UnityAction(sceneManager.VideoPickerPrevPage));
+
+        var pageLabel = CreateTMPText("PickerPageLabel", pickerPanel.transform, "1 / 1", 22,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, pageY), new Vector2(200, 46));
+        pageLabel.alignment = TextAlignmentOptions.Center;
+
+        var nextBtn = CreateButton("PickerNextPage", "▶", pickerPanel.transform,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(160, pageY), new Vector2(90, 46));
+        nextBtn.GetComponent<Image>().color = new Color(0.3f, 0.3f, 0.45f, 1f);
+        UnityEditor.Events.UnityEventTools.AddPersistentListener(
+            nextBtn.GetComponent<Button>().onClick,
+            new UnityEngine.Events.UnityAction(sceneManager.VideoPickerNextPage));
+
+        // Wire to sceneManager
+        sceneManager.videoPickerPanel = pickerPanel;
+        sceneManager.videoPickerPageLabel = pageLabel;
+        sceneManager.videoPickerSlots = slots;
+
+        pickerPanel.SetActive(false);
     }
 }
