@@ -164,13 +164,16 @@ Supported formats: `.asf`, `.avi`, `.dv`, `.m4v`, `.mp4`, `.mov`, `.mpg`, `.mpeg
 The included `pico.sh` script wraps common ADB/Unity commands:
 
 ```bash
-./pico.sh build           # Build APK via Unity CLI
-./pico.sh deploy          # Build + install + launch (one command)
-./pico.sh update          # Install/update APK on device
-./pico.sh upload all      # Sync all videos from videos/ folder to device
-./pico.sh upload movie.mp4  # Upload a single video
-./pico.sh launch          # Launch app on device
+./pico.sh build                # Build APK via Unity CLI
+./pico.sh deploy               # Build + install + launch (all-in-one)
+./pico.sh update               # Install/update APK on device
+./pico.sh upload all           # Sync all videos from videos/ folder to device
+./pico.sh upload movie.mp4     # Upload a single video
+./pico.sh download <URL>       # Download video from URL to videos/
+./pico.sh launch               # Launch app on device
 ```
+
+The `download` command uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) and supports YouTube, VK, and [most video sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md). The venv is set up automatically on first run (requires Python 3).
 
 Put your video files in the `videos/` folder, then run `./pico.sh upload all` to sync them to the headset.
 

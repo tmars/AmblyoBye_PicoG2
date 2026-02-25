@@ -34,3 +34,9 @@ Thumbs.db
 
 # Crashlytics
 crashlytics-build.properties
+
+# Videos (user content, not tracked)
+/videos/
+
+# Python venv
+tools/yt-dlp/venv/

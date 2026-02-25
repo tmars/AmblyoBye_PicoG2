@@ -1,44 +1,46 @@
 #!/bin/zsh
-# Pico G2 — утилиты управления
-# Использование: ./pico.sh <команда> [аргументы]
+# Pico G2 — CLI helper for AmblyoBye
+# Usage: ./pico.sh <command> [arguments]
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VIDEOS_DIR="$SCRIPT_DIR/videos"
 DEVICE_VIDEOS="/sdcard/Android/data/com.amblyobye.amblyobye/Movies"
 APK="$SCRIPT_DIR/Builds/AmblyoBye_PicoG2.apk"
 PACKAGE="com.amblyobye.amblyobye"
+YTDLP_DIR="$SCRIPT_DIR/tools/yt-dlp"
+YTDLP_VENV="$YTDLP_DIR/venv/bin/python3"
+YTDLP_SCRIPT="$YTDLP_DIR/download.py"
 
-# --- Проверка устройства ---
+# --- Device check ---
 check_device() {
   if ! adb devices | grep -q "device$"; then
-    echo "❌ Устройство не подключено. Подключи Pico G2 по USB."
+    echo "Device not connected. Connect Pico G2 via USB."
     exit 1
   fi
 }
 
-# --- Команды ---
+# --- Commands ---
 
 cmd_update() {
-  echo "📦 Обновление APK..."
+  echo "Installing APK..."
   if [ ! -f "$APK" ]; then
-    echo "❌ APK не найден: $APK"
+    echo "APK not found: $APK"
     exit 1
   fi
   check_device
-  adb install -r "$APK" && echo "✅ APK установлен"
+  adb install -r "$APK" && echo "APK installed"
 }
 
 cmd_upload() {
   local arg="$1"
   if [ -z "$arg" ]; then
-    echo "Использование: ./pico.sh upload <название.mp4 или /полный/путь>"
+    echo "Usage: ./pico.sh upload <file.mp4 or /full/path>"
     echo ""
-    echo "Видео в $VIDEOS_DIR:"
+    echo "Videos in $VIDEOS_DIR:"
     ls "$VIDEOS_DIR"/*.mp4 2>/dev/null | xargs -I{} basename "{}"
     exit 1
   fi
 
-  # Если передан полный путь — используем как есть, иначе ищем в videos/
   if [[ "$arg" == /* ]]; then
     local file="$arg"
   else
@@ -46,28 +48,26 @@ cmd_upload() {
   fi
 
   if [ ! -f "$file" ]; then
-    echo "❌ Файл не найден: $file"
+    echo "File not found: $file"
     exit 1
   fi
 
   check_device
-  echo "📤 Загружаю: $(basename "$file")"
-  adb push "$file" "$DEVICE_VIDEOS/" && echo "✅ Загружено в $DEVICE_VIDEOS"
+  echo "Uploading: $(basename "$file")"
+  adb push "$file" "$DEVICE_VIDEOS/" && echo "Uploaded to $DEVICE_VIDEOS"
 }
 
 cmd_sync_all() {
   check_device
 
   echo ""
-  echo "📂 Локальные видео: $VIDEOS_DIR"
-  echo "📱 Папка на устройстве: $DEVICE_VIDEOS"
+  echo "Local videos: $VIDEOS_DIR"
+  echo "Device path:  $DEVICE_VIDEOS"
   echo ""
 
-  # Получаем список файлов на устройстве
   local device_files
   device_files=$(adb shell ls "$DEVICE_VIDEOS/" 2>/dev/null | tr -d '\r')
 
-  # Собираем все локальные видео файлы
   local video_exts=("mp4" "mkv" "avi" "mov" "webm" "wmv" "mpg" "mpeg")
   local local_files=()
   for ext in "${video_exts[@]}"; do
@@ -77,26 +77,24 @@ cmd_sync_all() {
   done
 
   if [ ${#local_files[@]} -eq 0 ]; then
-    echo "⚠️  В папке videos/ нет видео файлов"
+    echo "No video files in videos/"
     exit 0
   fi
 
-  # Показываем статус локальных файлов
-  echo "Статус видео (локальные → устройство):"
-  echo "─────────────────────────────────────────────────────"
+  echo "Sync status (local -> device):"
+  echo "---------------------------------------------------"
   local missing=()
   for file in "${local_files[@]}"; do
     local name="$(basename "$file")"
     if echo "$device_files" | grep -qF "$name"; then
-      printf "  ✅  %s\n" "$name"
+      printf "  [ok]   %s\n" "$name"
     else
-      printf "  ❌  %s\n" "$name"
+      printf "  [--]   %s\n" "$name"
       missing+=("$file")
     fi
   done
-  echo "─────────────────────────────────────────────────────"
+  echo "---------------------------------------------------"
 
-  # Показываем файлы только на устройстве (которых нет локально)
   local only_on_device=()
   while IFS= read -r dfile; do
     [ -z "$dfile" ] && continue
@@ -109,37 +107,37 @@ cmd_sync_all() {
 
   if [ ${#only_on_device[@]} -gt 0 ]; then
     echo ""
-    echo "Только на устройстве (нет в local videos/):"
+    echo "Only on device (not in local videos/):"
     for f in "${only_on_device[@]}"; do
-      printf "  📱  %s\n" "$f"
+      printf "  [dev]  %s\n" "$f"
     done
-    echo "─────────────────────────────────────────────────────"
+    echo "---------------------------------------------------"
   fi
   echo ""
 
   if [ ${#missing[@]} -eq 0 ]; then
-    echo "✅ Все видео уже на устройстве. Ничего загружать не нужно."
+    echo "All videos are already on the device."
     exit 0
   fi
 
-  echo "⬆️  Загружаю ${#missing[@]} недостающих файлов..."
+  echo "Uploading ${#missing[@]} missing files..."
   echo ""
   local ok=0
   local fail=0
   for file in "${missing[@]}"; do
     local name="$(basename "$file")"
-    printf "  📤 %s ... " "$name"
+    printf "  %s ... " "$name"
     if adb push "$file" "$DEVICE_VIDEOS/" > /dev/null 2>&1; then
-      printf "✅\n"
+      printf "ok\n"
       (( ok++ ))
     else
-      printf "❌ ошибка\n"
+      printf "FAIL\n"
       (( fail++ ))
     fi
   done
 
   echo ""
-  echo "Готово: загружено $ok, ошибок $fail"
+  echo "Done: uploaded $ok, failed $fail"
 }
 
 cmd_build() {
@@ -149,20 +147,18 @@ cmd_build() {
   local RESULT="/tmp/unity-auto-build-result"
 
   if [ ! -f "$UNITY" ]; then
-    echo "❌ Unity не найден: $UNITY"
+    echo "Unity not found: $UNITY"
     exit 1
   fi
 
-  # Ставим триггер для AutoBuildOnLoad (он сработает при запуске редактора)
   rm -f "$RESULT"
   touch "/tmp/unity-auto-build-trigger"
 
-  echo "🔨 Запускаю Unity для сборки..."
-  echo "   Лог: $LOG"
-  echo "   (Unity откроется на несколько минут и закроется автоматически)"
+  echo "Building APK..."
+  echo "  Log: $LOG"
+  echo "  (Unity will open briefly and close automatically)"
   echo ""
 
-  # Без -batchmode: обходит проблему с лицензией, GUI мелькнёт и закроется
   "$UNITY" \
     -quit \
     -projectPath "$PROJECT" \
@@ -170,19 +166,17 @@ cmd_build() {
     2>/dev/null &
 
   local PID=$!
-  echo "   PID: $PID"
+  echo "  PID: $PID"
   echo ""
 
-  # Ждём завершения с прогрессом
   local i=0
   local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
   while kill -0 $PID 2>/dev/null; do
-    # Показываем текущую фазу из лога если доступна
     local phase=""
     if [ -f "$LOG" ]; then
       phase=$(grep -o "Starting CreateSceneAndBuild\|Build completed\|Compiling\|Building" "$LOG" 2>/dev/null | tail -1)
     fi
-    printf "\r   %s  %ds  %s          " "${spin[$((i % 10))]}" "$i" "$phase"
+    printf "\r  %s  %ds  %s          " "${spin[$((i % 10))]}" "$i" "$phase"
     sleep 1
     (( i++ ))
   done
@@ -193,24 +187,23 @@ cmd_build() {
 
   echo ""
 
-  # Проверяем результат через файл или APK
   if [ -f "$RESULT" ]; then
     local result_content=$(cat "$RESULT")
     if [[ "$result_content" == "SUCCESS" ]]; then
       local SIZE=$(du -sh "$APK" 2>/dev/null | cut -f1)
-      echo "✅ Сборка успешна! APK: $APK ($SIZE)"
+      echo "Build successful! APK: $APK ($SIZE)"
       return 0
     else
-      echo "❌ Сборка завершилась с ошибкой: $result_content"
+      echo "Build failed: $result_content"
     fi
   elif [ $EXIT_CODE -eq 0 ] && [ -f "$APK" ]; then
     local SIZE=$(du -sh "$APK" | cut -f1)
-    echo "✅ APK собран: $APK ($SIZE)"
+    echo "APK built: $APK ($SIZE)"
     return 0
   else
-    echo "❌ Сборка завершилась с ошибкой (код $EXIT_CODE)"
+    echo "Build failed (exit code $EXIT_CODE)"
     echo ""
-    echo "Последние строки лога:"
+    echo "Last 30 lines of log:"
     tail -30 "$LOG"
     exit 1
   fi
@@ -221,33 +214,57 @@ cmd_build_and_deploy() {
 }
 
 cmd_launch() {
-  echo "🚀 Запуск AmblyoBye..."
+  echo "Launching AmblyoBye..."
   check_device
-  adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 > /dev/null && echo "✅ Приложение запущено"
+  adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 > /dev/null && echo "App launched"
 }
 
-# --- Справка ---
+cmd_download() {
+  local url="$1"
+  if [ -z "$url" ]; then
+    echo "Usage: ./pico.sh download <URL>"
+    echo ""
+    echo "Downloads video to videos/ folder using yt-dlp."
+    echo "Supports YouTube, VK, and most video sites."
+    exit 1
+  fi
+
+  # Auto-setup venv if not present
+  if [ ! -f "$YTDLP_VENV" ]; then
+    echo "Setting up yt-dlp (first run)..."
+    python3 -m venv "$YTDLP_DIR/venv"
+    "$YTDLP_VENV" -m pip install --quiet -r "$YTDLP_DIR/requirements.txt"
+    echo "Setup complete."
+    echo ""
+  fi
+
+  mkdir -p "$VIDEOS_DIR"
+  "$YTDLP_VENV" "$YTDLP_SCRIPT" "$url" -o "$VIDEOS_DIR"
+}
+
+# --- Help ---
 cmd_help() {
   echo ""
-  echo "Pico G2 — утилиты"
+  echo "AmblyoBye Pico G2 — CLI helper"
   echo ""
-  echo "  ./pico.sh build               — собрать APK через Unity"
-  echo "  ./pico.sh deploy              — build + install + launch одной командой"
-  echo "  ./pico.sh update              — установить/обновить APK на устройстве"
-  echo "  ./pico.sh upload <файл>       — загрузить видео (имя из videos/ или полный путь)"
-  echo "  ./pico.sh upload all          — показать статус и загрузить недостающие видео"
-  echo "  ./pico.sh launch              — запустить AmblyoBye на устройстве"
+  echo "  ./pico.sh build               Build APK via Unity"
+  echo "  ./pico.sh deploy              Build + install + launch (all-in-one)"
+  echo "  ./pico.sh update              Install/update APK on device"
+  echo "  ./pico.sh upload <file>       Upload video (name from videos/ or full path)"
+  echo "  ./pico.sh upload all          Show sync status and upload missing videos"
+  echo "  ./pico.sh download <URL>      Download video from URL to videos/ folder"
+  echo "  ./pico.sh launch              Launch app on device"
   echo ""
-  echo "Примеры:"
+  echo "Examples:"
   echo "  ./pico.sh build"
   echo "  ./pico.sh deploy"
   echo "  ./pico.sh upload all"
   echo "  ./pico.sh upload movie.mp4"
-  echo "  ./pico.sh upload /Users/me/Downloads/film.mp4"
+  echo "  ./pico.sh download https://youtube.com/watch?v=..."
   echo ""
 }
 
-# --- Роутер ---
+# --- Router ---
 case "$1" in
   build)    cmd_build ;;
   deploy)   cmd_build_and_deploy ;;
@@ -256,6 +273,7 @@ case "$1" in
     if [ "$2" = "all" ]; then cmd_sync_all
     else cmd_upload "$2"
     fi ;;
+  download) cmd_download "$2" ;;
   launch)   cmd_launch ;;
   *)        cmd_help ;;
 esac
