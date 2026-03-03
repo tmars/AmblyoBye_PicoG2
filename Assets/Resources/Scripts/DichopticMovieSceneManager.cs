@@ -676,6 +676,14 @@ public class DichopticMovieSceneManager : MonoBehaviour
         string videoName = System.IO.Path.GetFileName(filepath);
         StorageHandler.WriteFile(TypeSafeDir.Settings, LAST_VIDEO_FILE, videoName);
 
+        // Send weekly summary on first play of the day
+        if (statsDb != null && statsDb.IsFirstSessionToday() && telegram != null)
+        {
+            string summary = statsDb.GetWeeklySummary();
+            if (!string.IsNullOrEmpty(summary))
+                telegram.SendMessage(summary);
+        }
+
         // Log session start & notify
         statsDb?.LogEvent(currentSessionId, "start", videoName, sessionSecondsWatched, 0);
         telegram?.StartSessionMessage(videoName);
