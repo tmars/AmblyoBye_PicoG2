@@ -14,6 +14,11 @@ public class TelegramNotifier
     private const string CONFIG_FILE = "telegram.cfg";
     private const string BASE_URL = "https://api.telegram.org/bot";
 
+    // Session message: one message per session, updated via editMessageText
+    private int _sessionMessageId = -1;
+    private string _sessionHeader = "";
+    private List<string> _sessionLines = new List<string>();
+
     public bool IsConfigured => _configured;
 
     public TelegramNotifier()
@@ -58,13 +63,77 @@ public class TelegramNotifier
         }
     }
 
+    private string TimeNow()
+    {
+        return DateTime.Now.ToString("HH:mm");
+    }
+
+    private string BuildSessionText()
+    {
+        string text = _sessionHeader;
+        if (_sessionLines.Count > 0)
+            text += "\n\n" + string.Join("\n", _sessionLines.ToArray());
+        return text;
+    }
+
+    /// <summary>
+    /// Start a new session message. Sends a new message and saves its ID for future edits.
+    /// </summary>
+    public void StartSessionMessage(string videoName)
+    {
+        _sessionHeader = "Started: " + videoName;
+        _sessionLines.Clear();
+        _sessionMessageId = -1;
+
+        if (!_configured) return;
+        CoroutineRunner.Run(SendAndSaveId(BuildSessionText()));
+    }
+
+    /// <summary>
+    /// Append a status line and edit the session message.
+    /// </summary>
+    public void AppendSessionStatus(string line)
+    {
+        _sessionLines.Add(line + " (" + TimeNow() + ")");
+
+        if (!_configured) return;
+        if (_sessionMessageId > 0)
+            CoroutineRunner.Run(EditMessageCoroutine(_sessionMessageId, BuildSessionText()));
+        else
+            CoroutineRunner.Run(SendAndSaveId(BuildSessionText()));
+    }
+
+    /// <summary>
+    /// Finalize session message with a closing line.
+    /// </summary>
+    public void EndSession(string line)
+    {
+        _sessionLines.Add(line + " (" + TimeNow() + ")");
+
+        if (!_configured) return;
+        string text = BuildSessionText();
+        if (_sessionMessageId > 0)
+        {
+            // Try sync edit for OnApplicationQuit
+            EditMessageSync(_sessionMessageId, text);
+        }
+        else
+        {
+            SendMessageSync(text);
+        }
+        _sessionMessageId = -1;
+    }
+
+    /// <summary>
+    /// Send a standalone message (not part of session message).
+    /// </summary>
     public void SendMessage(string text)
     {
         if (!_configured) return;
         CoroutineRunner.Run(SendMessageCoroutine(text));
     }
 
-    private IEnumerator SendMessageCoroutine(string text)
+    private IEnumerator SendAndSaveId(string text)
     {
         string url = BASE_URL + _botToken + "/sendMessage";
         WWWForm form = new WWWForm();
@@ -75,8 +144,68 @@ public class TelegramNotifier
         {
             req.timeout = 10;
             yield return req.SendWebRequest();
-            if (req.result != UnityWebRequest.Result.Success)
+            if (req.result == UnityWebRequest.Result.Success)
+            {
+                // Parse message_id from response JSON
+                try
+                {
+                    string json = req.downloadHandler.text;
+                    int idx = json.IndexOf("\"message_id\":");
+                    if (idx >= 0)
+                    {
+                        int start = idx + 13;
+                        int end = json.IndexOf(",", start);
+                        if (end < 0) end = json.IndexOf("}", start);
+                        string idStr = json.Substring(start, end - start).Trim();
+                        _sessionMessageId = int.Parse(idStr);
+                    }
+                }
+                catch (Exception e) { Debug.LogWarning("[TelegramNotifier] Parse message_id: " + e); }
+            }
+            else
+            {
                 Debug.LogWarning("[TelegramNotifier] Send failed: " + req.error);
+            }
+        }
+    }
+
+    private IEnumerator EditMessageCoroutine(int messageId, string text)
+    {
+        string url = BASE_URL + _botToken + "/editMessageText";
+        WWWForm form = new WWWForm();
+        form.AddField("chat_id", _chatId);
+        form.AddField("message_id", messageId.ToString());
+        form.AddField("text", text);
+
+        using (var req = UnityWebRequest.Post(url, form))
+        {
+            req.timeout = 10;
+            yield return req.SendWebRequest();
+            if (req.result != UnityWebRequest.Result.Success)
+                Debug.LogWarning("[TelegramNotifier] Edit failed: " + req.error);
+        }
+    }
+
+    private void EditMessageSync(int messageId, string text)
+    {
+        if (!_configured) return;
+        try
+        {
+            string url = BASE_URL + _botToken + "/editMessageText";
+            WWWForm form = new WWWForm();
+            form.AddField("chat_id", _chatId);
+            form.AddField("message_id", messageId.ToString());
+            form.AddField("text", text);
+
+            var req = UnityWebRequest.Post(url, form);
+            req.timeout = 3;
+            var op = req.SendWebRequest();
+            while (!op.isDone) { }
+            req.Dispose();
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[TelegramNotifier] Sync edit failed: " + e);
         }
     }
 
@@ -99,6 +228,22 @@ public class TelegramNotifier
         catch (Exception e)
         {
             Debug.LogWarning("[TelegramNotifier] Sync send failed: " + e);
+        }
+    }
+
+    private IEnumerator SendMessageCoroutine(string text)
+    {
+        string url = BASE_URL + _botToken + "/sendMessage";
+        WWWForm form = new WWWForm();
+        form.AddField("chat_id", _chatId);
+        form.AddField("text", text);
+
+        using (var req = UnityWebRequest.Post(url, form))
+        {
+            req.timeout = 10;
+            yield return req.SendWebRequest();
+            if (req.result != UnityWebRequest.Result.Success)
+                Debug.LogWarning("[TelegramNotifier] Send failed: " + req.error);
         }
     }
 

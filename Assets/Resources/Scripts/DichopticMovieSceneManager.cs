@@ -197,14 +197,13 @@ public class DichopticMovieSceneManager : MonoBehaviour
                 SaveVideoPosition();
             }
 
-            // Periodic Telegram status
+            // Periodic Telegram status update (edit session message)
             telegramTickTimer += Time.deltaTime;
             if (telegramTickTimer >= TELEGRAM_TICK_INTERVAL)
             {
                 telegramTickTimer = 0f;
                 int mins = (int)(sessionSecondsWatched / 60);
-                string videoName = Path.GetFileName(currentVideoPath);
-                telegram?.SendMessage("Watching: " + videoName + " — " + mins + " min");
+                telegram?.AppendSessionStatus("⏱ " + mins + " min");
             }
         }
         UpdateVideoTimeText();
@@ -679,7 +678,7 @@ public class DichopticMovieSceneManager : MonoBehaviour
 
         // Log session start & notify
         statsDb?.LogEvent(currentSessionId, "start", videoName, sessionSecondsWatched, 0);
-        telegram?.SendMessage("Started: " + videoName);
+        telegram?.StartSessionMessage(videoName);
         telegramTickTimer = 0f;
     }
 
@@ -891,7 +890,7 @@ public class DichopticMovieSceneManager : MonoBehaviour
                 string videoName = Path.GetFileName(currentVideoPath);
                 statsDb?.LogEvent(currentSessionId, "pause_headset", videoName, sessionSecondsWatched,
                     videoPlayer.isPrepared ? videoPlayer.time : 0);
-                telegram?.SendMessage("Headset removed, paused at " + mins + " min");
+                telegram?.AppendSessionStatus("😴 Paused at " + mins + " min");
             }
         }
         else
@@ -907,7 +906,7 @@ public class DichopticMovieSceneManager : MonoBehaviour
                 string videoName = Path.GetFileName(currentVideoPath);
                 statsDb?.LogEvent(currentSessionId, "resume_headset", videoName, sessionSecondsWatched,
                     videoPlayer.isPrepared ? videoPlayer.time : 0);
-                telegram?.SendMessage("Resumed watching");
+                telegram?.AppendSessionStatus("▶️ Resumed");
             }
         }
     }
@@ -923,7 +922,7 @@ public class DichopticMovieSceneManager : MonoBehaviour
         statsDb?.LogEvent(currentSessionId, "stop", videoName, sessionSecondsWatched,
             videoPlayer != null && videoPlayer.isPrepared ? videoPlayer.time : 0);
         statsDb?.SetCleanShutdown(true);
-        telegram?.SendMessageSync("Session ended: " + mins + " min. Today: " + todayTotal + " min");
+        telegram?.EndSession("🔴 Ended: " + mins + " min. Today: " + todayTotal + " min");
         statsDb?.Close();
     }
 
