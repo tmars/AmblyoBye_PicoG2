@@ -84,10 +84,24 @@ public class DichopticMovieSceneManager : MonoBehaviour
     private float savePositionTimer = 0f;
     private const float SAVE_INTERVAL = 5f; // save every 5 seconds
 
+    // Stats & notifications
+    private StatsDatabase statsDb = null;
+    private TelegramNotifier telegram = null;
+    private string currentSessionId;
+    private float telegramTickTimer = 0f;
+    private const float TELEGRAM_TICK_INTERVAL = 300f; // 5 minutes
+
+    // Proximity sensor pause/resume
+    private bool wasPlayingBeforeHeadsetOff = false;
+    private bool pausedByHeadsetRemoval = false;
+
     void Awake()
     {
         Instance = this;
         usageTracker = new DailyUsageTracker();
+        statsDb = new StatsDatabase();
+        telegram = new TelegramNotifier();
+        currentSessionId = Guid.NewGuid().ToString();
     }
 
     void Start()
@@ -98,6 +112,15 @@ public class DichopticMovieSceneManager : MonoBehaviour
         PopulateMovieDropdown();
         PopulateVideoPicker();
         StartCoroutine(RunBlobChangeTimer());
+
+        // Crash detection
+        if (statsDb != null && !statsDb.WasPreviousShutdownClean())
+        {
+            statsDb.LogEvent(currentSessionId, "crash_detected", "", 0, 0);
+            telegram?.SendMessage("Previous session ended unexpectedly");
+        }
+        statsDb?.SetCleanShutdown(false);
+
         AutoPlayFirstVideo();
     }
 
@@ -172,6 +195,16 @@ public class DichopticMovieSceneManager : MonoBehaviour
             {
                 savePositionTimer = 0f;
                 SaveVideoPosition();
+            }
+
+            // Periodic Telegram status
+            telegramTickTimer += Time.deltaTime;
+            if (telegramTickTimer >= TELEGRAM_TICK_INTERVAL)
+            {
+                telegramTickTimer = 0f;
+                int mins = (int)(sessionSecondsWatched / 60);
+                string videoName = Path.GetFileName(currentVideoPath);
+                telegram?.SendMessage("Watching: " + videoName + " — " + mins + " min");
             }
         }
         UpdateVideoTimeText();
@@ -477,10 +510,19 @@ public class DichopticMovieSceneManager : MonoBehaviour
     public void TogglePause()
     {
         if (videoPlayer == null) return;
+        pausedByHeadsetRemoval = false; // manual toggle overrides headset state
         if (videoPlayer.isPlaying)
             videoPlayer.Pause();
         else
             videoPlayer.Play();
+    }
+
+    // ---- Send stats to Telegram ----
+    public void SendStatsToTelegram()
+    {
+        if (statsDb == null || telegram == null || !telegram.IsConfigured) return;
+        string dbPath = statsDb.GetDbFilePath();
+        StartCoroutine(telegram.SendFile(dbPath, "AmblyoBye stats database"));
     }
 
     // ---- Screen distance controls ----
@@ -632,7 +674,13 @@ public class DichopticMovieSceneManager : MonoBehaviour
         VRUISetup.Instance?.SetReticleVisible(false);
 
         // Save last played video
-        StorageHandler.WriteFile(TypeSafeDir.Settings, LAST_VIDEO_FILE, System.IO.Path.GetFileName(filepath));
+        string videoName = System.IO.Path.GetFileName(filepath);
+        StorageHandler.WriteFile(TypeSafeDir.Settings, LAST_VIDEO_FILE, videoName);
+
+        // Log session start & notify
+        statsDb?.LogEvent(currentSessionId, "start", videoName, sessionSecondsWatched, 0);
+        telegram?.SendMessage("Started: " + videoName);
+        telegramTickTimer = 0f;
     }
 
     public void LoadMovieButtonHandle()
@@ -828,12 +876,55 @@ public class DichopticMovieSceneManager : MonoBehaviour
 
     void OnApplicationPause(bool pause)
     {
-        if (pause) SaveVideoPosition();
+        if (pause)
+        {
+            SaveVideoPosition();
+            statsDb?.SetCleanShutdown(true); // safety: Android may kill after pause
+
+            if (videoPlayer != null && videoPlayer.isPlaying)
+            {
+                wasPlayingBeforeHeadsetOff = true;
+                pausedByHeadsetRemoval = true;
+                videoPlayer.Pause();
+
+                int mins = (int)(sessionSecondsWatched / 60);
+                string videoName = Path.GetFileName(currentVideoPath);
+                statsDb?.LogEvent(currentSessionId, "pause_headset", videoName, sessionSecondsWatched,
+                    videoPlayer.isPrepared ? videoPlayer.time : 0);
+                telegram?.SendMessage("Headset removed, paused at " + mins + " min");
+            }
+        }
+        else
+        {
+            statsDb?.SetCleanShutdown(false); // back to in-progress
+
+            if (wasPlayingBeforeHeadsetOff && videoPlayer != null)
+            {
+                videoPlayer.Play();
+                wasPlayingBeforeHeadsetOff = false;
+                pausedByHeadsetRemoval = false;
+
+                string videoName = Path.GetFileName(currentVideoPath);
+                statsDb?.LogEvent(currentSessionId, "resume_headset", videoName, sessionSecondsWatched,
+                    videoPlayer.isPrepared ? videoPlayer.time : 0);
+                telegram?.SendMessage("Resumed watching");
+            }
+        }
     }
 
     void OnApplicationQuit()
     {
         SaveVideoPosition();
+
+        int mins = (int)(sessionSecondsWatched / 60);
+        int todayTotal = statsDb != null ? statsDb.GetTodayTotalSeconds() / 60 + mins : mins;
+        string videoName = Path.GetFileName(currentVideoPath);
+
+        statsDb?.LogEvent(currentSessionId, "stop", videoName, sessionSecondsWatched,
+            videoPlayer != null && videoPlayer.isPrepared ? videoPlayer.time : 0);
+        statsDb?.SetCleanShutdown(true);
+        telegram?.SendMessageSync("Session ended: " + mins + " min. Today: " + todayTotal + " min");
+        statsDb?.Close();
     }
 
     private void UpdateCamera()

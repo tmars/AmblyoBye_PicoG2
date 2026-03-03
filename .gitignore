@@ -40,3 +40,6 @@ crashlytics-build.properties
 
 # Python venv
 tools/yt-dlp/venv/
+
+# Telegram config (contains bot token)
+**/telegram.cfg

@@ -352,6 +352,16 @@ public class SceneBuilderAndBuild
             distFartherComp.onClick,
             new UnityEngine.Events.UnityAction(sceneManager.ScreenFarther));
 
+        // ---- Send Stats Button ----
+        float sendStatsY = -245f;
+        var sendStatsBtn = CreateButton("SendStatsButton", "Send Stats to TG", panel.transform,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, sendStatsY), new Vector2(220, 35));
+        sendStatsBtn.GetComponent<Image>().color = new Color(0.2f, 0.4f, 0.55f, 1f);
+        var sendStatsBtnComp = sendStatsBtn.GetComponent<Button>();
+        UnityEditor.Events.UnityEventTools.AddPersistentListener(
+            sendStatsBtnComp.onClick,
+            new UnityEngine.Events.UnityAction(sceneManager.SendStatsToTelegram));
+
         // ---- Video Picker Panel (создаётся ПОСЛЕДНИМ — рендерится поверх всех кнопок) ----
         CreateVideoPickerPanel(panel.transform, sceneManager);
 

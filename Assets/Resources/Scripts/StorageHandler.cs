@@ -115,9 +115,11 @@ public class TypeSafeDir
 
     public static TypeSafeDir Settings { get { return new TypeSafeDir("Settings"); } }
 
+    public static TypeSafeDir Stats { get { return new TypeSafeDir("Stats"); } }
+
     public static List<TypeSafeDir> getAllDirs()
     {
-        return new List<TypeSafeDir>() { Movies, Settings };
+        return new List<TypeSafeDir>() { Movies, Settings, Stats };
     }
     public override string ToString()
     {

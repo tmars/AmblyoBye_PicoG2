@@ -1,0 +1,6 @@
+<linker>
+  <assembly fullname="Assembly-CSharp">
+    <type fullname="StatsDatabase+SessionEvent" preserve="all"/>
+    <type fullname="StatsDatabase+AppState" preserve="all"/>
+  </assembly>
+</linker>

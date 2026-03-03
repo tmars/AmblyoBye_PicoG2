@@ -242,6 +242,82 @@ cmd_download() {
   "$YTDLP_VENV" "$YTDLP_SCRIPT" "$url" -o "$VIDEOS_DIR"
 }
 
+cmd_stats() {
+  check_device
+
+  local DEVICE_DB="/sdcard/Android/data/com.amblyobye.amblyobye/Stats/stats.db"
+  local LOCAL_DB="$SCRIPT_DIR/stats.db"
+
+  echo "Pulling stats.db from device..."
+  adb pull "$DEVICE_DB" "$LOCAL_DB" 2>/dev/null
+  if [ ! -f "$LOCAL_DB" ]; then
+    echo "No stats.db found on device yet."
+    exit 0
+  fi
+
+  echo ""
+  echo "AmblyoBye — Watch Statistics"
+  echo "==================================================="
+
+  # Total sessions and watch time
+  local total_sessions=$(sqlite3 "$LOCAL_DB" "SELECT COUNT(DISTINCT SessionId) FROM SessionEvent WHERE EventType='start';")
+  local total_sec=$(sqlite3 "$LOCAL_DB" "SELECT COALESCE(SUM(SessionSeconds), 0) FROM SessionEvent WHERE EventType='stop';")
+  local total_h=$((total_sec / 3600))
+  local total_m=$(( (total_sec % 3600) / 60 ))
+
+  echo ""
+  echo "Total sessions:    $total_sessions"
+  echo "Total watch time:  ${total_h}h ${total_m}m"
+
+  # Crashes
+  local crashes=$(sqlite3 "$LOCAL_DB" "SELECT COUNT(*) FROM SessionEvent WHERE EventType='crash_detected';")
+  if [ "$crashes" -gt 0 ]; then
+    echo "Crashes detected:  $crashes"
+  fi
+
+  # Last 7 days
+  echo ""
+  echo "Last 7 days:"
+  echo "---------------------------------------------------"
+  sqlite3 -separator '|' "$LOCAL_DB" "
+    SELECT date(Timestamp) as day,
+           CAST(SUM(CASE WHEN EventType='stop' THEN SessionSeconds ELSE 0 END) / 60 AS INT) as mins,
+           GROUP_CONCAT(DISTINCT VideoName) as videos
+    FROM SessionEvent
+    WHERE date(Timestamp) >= date('now', '-7 days')
+      AND EventType IN ('start', 'stop')
+    GROUP BY day
+    ORDER BY day DESC;
+  " 2>/dev/null | while IFS='|' read -r day mins videos; do
+    local formatted_day=$(date -j -f "%Y-%m-%d" "$day" "+%a %d %b" 2>/dev/null || echo "$day")
+    printf "  %-12s  %3dm  %s\n" "$formatted_day" "$mins" "$videos"
+  done
+  echo "---------------------------------------------------"
+
+  echo ""
+  echo "DB file: $LOCAL_DB"
+  echo ""
+}
+
+cmd_push_tg_config() {
+  local cfg="$1"
+  if [ -z "$cfg" ]; then
+    echo "Usage: ./pico.sh tg-config <path/to/telegram.cfg>"
+    echo ""
+    echo "File format:"
+    echo "  bot_token=123456:ABC-DEF..."
+    echo "  chat_id=123456789"
+    exit 1
+  fi
+  if [ ! -f "$cfg" ]; then
+    echo "File not found: $cfg"
+    exit 1
+  fi
+  check_device
+  adb push "$cfg" "/sdcard/Android/data/com.amblyobye.amblyobye/Settings/telegram.cfg"
+  echo "Telegram config pushed to device"
+}
+
 # --- Help ---
 cmd_help() {
   echo ""
@@ -253,6 +329,8 @@ cmd_help() {
   echo "  ./pico.sh upload <file>       Upload video (name from videos/ or full path)"
   echo "  ./pico.sh upload all          Show sync status and upload missing videos"
   echo "  ./pico.sh download <URL>      Download video from URL to videos/ folder"
+  echo "  ./pico.sh stats               Pull stats.db and show watch statistics"
+  echo "  ./pico.sh tg-config <file>    Push telegram.cfg to device"
   echo "  ./pico.sh launch              Launch app on device"
   echo ""
   echo "Examples:"
@@ -261,6 +339,8 @@ cmd_help() {
   echo "  ./pico.sh upload all"
   echo "  ./pico.sh upload movie.mp4"
   echo "  ./pico.sh download https://youtube.com/watch?v=..."
+  echo "  ./pico.sh stats"
+  echo "  ./pico.sh tg-config telegram.cfg"
   echo ""
 }
 
@@ -273,7 +353,9 @@ case "$1" in
     if [ "$2" = "all" ]; then cmd_sync_all
     else cmd_upload "$2"
     fi ;;
-  download) cmd_download "$2" ;;
-  launch)   cmd_launch ;;
-  *)        cmd_help ;;
+  download)  cmd_download "$2" ;;
+  stats)     cmd_stats ;;
+  tg-config) cmd_push_tg_config "$2" ;;
+  launch)    cmd_launch ;;
+  *)         cmd_help ;;
 esac
