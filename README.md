@@ -46,6 +46,28 @@ The app plays videos with a dichoptic filter — each eye sees a different set o
 - Video playback position saved per file (resume where you left off)
 - Last played video remembered across sessions
 
+**Statistics & notifications:**
+- SQLite database for session tracking (start, stop, pause, resume, crash detection)
+- Telegram notifications — one live-updating message per session:
+  ```
+  Started: Luka.mp4
+
+  ⏱ 5 min (13:35)
+  ⏱ 10 min (13:40)
+  😴 Paused at 12 min (13:42)
+  ▶️ Resumed (13:44)
+  🔴 Ended: 15 min. Today: 45 min (13:47)
+  ```
+- Weekly summary sent on first play of each day
+- Crash/force-kill detection on next launch
+- "Send Stats to TG" button — sends stats.db file to Telegram
+- Fully optional — works without Telegram config
+
+**Proximity sensor:**
+- Auto-pause video when headset is removed
+- Auto-resume when headset is put back on
+- Manual pause is not overridden by headset events
+
 **VR UI:**
 - Gaze-based UI — look at buttons and press to click
 - Works with controller (touchpad) **and without** (headset body button)
@@ -170,12 +192,30 @@ The included `pico.sh` script wraps common ADB/Unity commands:
 ./pico.sh upload all           # Sync all videos from videos/ folder to device
 ./pico.sh upload movie.mp4     # Upload a single video
 ./pico.sh download <URL>       # Download video from URL to videos/
+./pico.sh stats                # Pull stats.db and show watch statistics
+./pico.sh tg-config <file>     # Push telegram.cfg to device
 ./pico.sh launch               # Launch app on device
 ```
 
 The `download` command uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) and supports YouTube, VK, and [most video sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md). The venv is set up automatically on first run (requires Python 3).
 
 Put your video files in the `videos/` folder, then run `./pico.sh upload all` to sync them to the headset.
+
+### Telegram notifications (optional)
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) and get the token
+2. Get your chat ID (send `/start` to the bot, then use [@userinfobot](https://t.me/userinfobot) or check via API)
+3. Create `telegram.cfg`:
+   ```
+   bot_token=123456:ABC-DEF...
+   chat_id=123456789
+   ```
+4. Push to device:
+   ```bash
+   ./pico.sh tg-config telegram.cfg
+   ```
+
+If no config file is present, the app works normally without any notifications.
 
 ---
 
@@ -192,6 +232,8 @@ Put your video files in the `videos/` folder, then run `./pico.sh upload all` to
 | `Assets/Resources/Scripts/PicoEyeIndexSetter.cs` | Sets `_PicoEyeIndex` per eye in `OnPreRender` |
 | `Assets/Resources/Scripts/SliderPlusMinus.cs` | VR-friendly +/- button controls |
 | `Assets/Resources/Scripts/DichopticMovieSettingsManager.cs` | Settings persistence to file |
+| `Assets/Resources/Scripts/StatsDatabase.cs` | SQLite stats database (session events, crash detection) |
+| `Assets/Resources/Scripts/TelegramNotifier.cs` | Telegram Bot API (live session messages, file sending) |
 | `Assets/Resources/Shaders/DichopticMovieUnlit.shader` | Dichoptic filter shader |
 
 ### Dichoptic shader
