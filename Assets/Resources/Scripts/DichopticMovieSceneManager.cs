@@ -584,20 +584,13 @@ public class DichopticMovieSceneManager : MonoBehaviour
 
             // Rotation handled by UpdateCamera every frame
 
-            // Move settings canvas slightly in front of screen
+            // Settings canvas always at eye level (no tilt)
             if (settingsUI != null)
             {
                 float canvasDist = DISTANCE_TO_SCREEN_IN_M - 0.05f;
-                float canvasH = canvasDist * Mathf.Cos(tiltRad);
-                float canvasV = canvasDist * Mathf.Sin(tiltRad);
-                Vector3 canvasPos = origin + forward * canvasH;
-                canvasPos.y = origin.y + canvasV;
+                Vector3 canvasPos = origin + forward * canvasDist;
+                canvasPos.y = origin.y;
                 settingsUI.transform.position = canvasPos;
-
-                // Canvas uses same direction as screen (LookRotation toward screen = away from viewer)
-                Vector3 canvasLookDir = newPos - origin;
-                if (canvasLookDir.sqrMagnitude > 0.001f)
-                    settingsUI.transform.rotation = Quaternion.LookRotation(canvasLookDir, Vector3.up);
             }
 
             isCameraInit = true;
