@@ -160,7 +160,7 @@ public class SceneBuilderAndBuild
 
         var canvasRT = canvasObj.GetComponent<RectTransform>();
         canvasRT.position = new Vector3(0, 1.6f, 1.95f);
-        canvasRT.sizeDelta = new Vector2(800, 600);
+        canvasRT.sizeDelta = new Vector2(800, 700);
         canvasRT.localScale = new Vector3(0.002f, 0.002f, 0.002f);
 
         // VR UI setup (finds camera, sets up eye index for dichoptic rendering)
