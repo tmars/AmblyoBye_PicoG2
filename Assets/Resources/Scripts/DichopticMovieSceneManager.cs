@@ -546,13 +546,13 @@ public class DichopticMovieSceneManager : MonoBehaviour
     // ---- Screen tilt controls (arc up/down) ----
     public void ScreenTiltUp()
     {
-        screenTiltAngle = Mathf.Min(90f, screenTiltAngle + 15f);
+        screenTiltAngle = Mathf.Min(90f, screenTiltAngle + 5f);
         MoveScreenToDistance();
     }
 
     public void ScreenTiltDown()
     {
-        screenTiltAngle = Mathf.Max(-90f, screenTiltAngle - 15f);
+        screenTiltAngle = Mathf.Max(-90f, screenTiltAngle - 5f);
         MoveScreenToDistance();
     }
 
