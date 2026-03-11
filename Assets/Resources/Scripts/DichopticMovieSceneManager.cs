@@ -582,10 +582,7 @@ public class DichopticMovieSceneManager : MonoBehaviour
             newPos.y = origin.y + verticalOffset;
             moviePlayerObject.transform.position = newPos;
 
-            // Screen faces the viewer (look from screen toward origin)
-            Vector3 lookDir = origin - newPos;
-            if (lookDir.sqrMagnitude > 0.001f)
-                moviePlayerObject.transform.rotation = Quaternion.LookRotation(lookDir, Vector3.up);
+            // Rotation handled by UpdateCamera every frame
 
             // Move settings canvas slightly in front of screen
             if (settingsUI != null)
@@ -597,7 +594,8 @@ public class DichopticMovieSceneManager : MonoBehaviour
                 canvasPos.y = origin.y + canvasV;
                 settingsUI.transform.position = canvasPos;
 
-                Vector3 canvasLookDir = origin - canvasPos;
+                // Canvas uses same direction as screen (LookRotation toward screen = away from viewer)
+                Vector3 canvasLookDir = newPos - origin;
                 if (canvasLookDir.sqrMagnitude > 0.001f)
                     settingsUI.transform.rotation = Quaternion.LookRotation(canvasLookDir, Vector3.up);
             }
