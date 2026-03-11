@@ -408,19 +408,20 @@ public class DichopticMovieSceneManager : MonoBehaviour
     private void PopulateMovieDropdown()
     {
         StorageHandler.InitDirectoryTree();
-        List<string> availableMovies = StorageHandler.GetFileNamesFromDir(TypeSafeDir.Movies);
-        availableMovies.Sort(StringComparer.OrdinalIgnoreCase);
+        List<string> availableMoviePaths = StorageHandler.GetFilePathsFromDir(TypeSafeDir.Movies);
         List<string> allowedExtensions = new List<string> { ".asf", ".avi", ".dv", ".m4v", ".mp4", ".mov", ".mpg", ".mpeg", ".ogv", ".vp8", ".webm", ".wmv" };
+
+        // Filter by extension, then sort by file creation time (newest first)
+        var filtered = new List<string>();
+        foreach (var fp in availableMoviePaths)
+            if (allowedExtensions.Contains(Path.GetExtension(fp).ToLowerInvariant()))
+                filtered.Add(fp);
+        filtered.Sort((a, b) => File.GetCreationTime(b).CompareTo(File.GetCreationTime(a)));
 
         movieListDropdown.ClearOptions();
         movieListDropdown.AddOptions(new List<string> { EMPTY_MOVIE_NAME });
-        foreach (string movieFileName in availableMovies)
-        {
-            if (allowedExtensions.Contains(Path.GetExtension(movieFileName)))
-            {
-                movieListDropdown.AddOptions(new List<string> { movieFileName });
-            }
-        }
+        foreach (string fp in filtered)
+            movieListDropdown.AddOptions(new List<string> { Path.GetFileName(fp) });
     }
 
     public void ChangeEyeBiasValue()
@@ -582,16 +583,7 @@ public class DichopticMovieSceneManager : MonoBehaviour
             newPos.y = origin.y + verticalOffset;
             moviePlayerObject.transform.position = newPos;
 
-            // Rotation handled by UpdateCamera every frame
-
-            // Settings canvas always at eye level (no tilt)
-            if (settingsUI != null)
-            {
-                float canvasDist = DISTANCE_TO_SCREEN_IN_M - 0.05f;
-                Vector3 canvasPos = origin + forward * canvasDist;
-                canvasPos.y = origin.y;
-                settingsUI.transform.position = canvasPos;
-            }
+            // Rotation and settings canvas positioning handled by UpdateCamera every frame
 
             isCameraInit = true;
         }
@@ -784,7 +776,8 @@ public class DichopticMovieSceneManager : MonoBehaviour
         foreach (var f in allFiles)
             if (allowed.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 pickerVideoList.Add(f);
-        pickerVideoList.Sort(StringComparer.OrdinalIgnoreCase);
+        // Sort by file creation time (newest first)
+        pickerVideoList.Sort((a, b) => File.GetCreationTime(b).CompareTo(File.GetCreationTime(a)));
         pickerPage = 0;
         RefreshPickerPage();
     }
@@ -991,7 +984,19 @@ public class DichopticMovieSceneManager : MonoBehaviour
             Vector3 lookDir = moviePlayerObject.transform.position - Camera.main.transform.position;
             if (lookDir.sqrMagnitude > 0.001f)
             {
-                moviePlayerObject.transform.rotation = Quaternion.LookRotation(lookDir, Vector3.up);
+                // Screen must be perpendicular to the look direction.
+                // Use a tilted "up" vector so the screen face is normal to the view ray.
+                Vector3 right = Vector3.Cross(Vector3.up, lookDir).normalized;
+                Vector3 screenUp = Vector3.Cross(lookDir, right).normalized;
+                moviePlayerObject.transform.rotation = Quaternion.LookRotation(lookDir, screenUp);
+            }
+
+            // Settings canvas follows screen every frame
+            if (settingsUI != null)
+            {
+                Vector3 toViewer = (Camera.main.transform.position - moviePlayerObject.transform.position).normalized;
+                settingsUI.transform.position = moviePlayerObject.transform.position + toViewer * 0.01f;
+                settingsUI.transform.rotation = moviePlayerObject.transform.rotation;
             }
         }
     }
