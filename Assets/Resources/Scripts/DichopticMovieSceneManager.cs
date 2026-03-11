@@ -99,6 +99,14 @@ public class DichopticMovieSceneManager : MonoBehaviour
     private bool wasPlayingBeforeHeadsetOff = false;
     private bool pausedByHeadsetRemoval = false;
 
+    // Gaze follow: screen drifts toward where you look
+    private bool gazeFollowEnabled = true;
+    private float gazeOffTimer = 0f;
+    private const float GAZE_FOLLOW_DELAY = 2f;      // seconds looking away before screen starts moving
+    private const float GAZE_FOLLOW_SPEED = 1.5f;     // lerp speed (higher = faster)
+    private const float GAZE_THRESHOLD_ANGLE = 15f;    // degrees off-center to trigger
+    private Vector3 screenBaseDirection = Vector3.forward; // horizontal direction screen faces
+
     void Awake()
     {
         Instance = this;
@@ -168,6 +176,7 @@ public class DichopticMovieSceneManager : MonoBehaviour
 
     void Update()
     {
+        UpdateGazeFollow();
         UpdateCamera();
 
         // Pico G2: TOUCHPAD (controller) or Escape (headset body button) toggles settings / clicks
@@ -585,16 +594,19 @@ public class DichopticMovieSceneManager : MonoBehaviour
         if (refTransform != null && moviePlayerObject != null)
         {
             Vector3 origin = refTransform.position;
+
+            // Update screenBaseDirection from current reference
             Vector3 forward = refTransform.forward;
             forward.y = 0f;
             if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
             forward = forward.normalized;
+            screenBaseDirection = forward;
 
             // Position: move along arc (same distance from viewer, different height)
             float tiltRad = screenTiltAngle * Mathf.Deg2Rad;
             float horizontalDist = DISTANCE_TO_SCREEN_IN_M * Mathf.Cos(tiltRad);
             float verticalOffset = DISTANCE_TO_SCREEN_IN_M * Mathf.Sin(tiltRad);
-            Vector3 newPos = origin + forward * horizontalDist;
+            Vector3 newPos = origin + screenBaseDirection * horizontalDist;
             newPos.y = origin.y + verticalOffset;
             moviePlayerObject.transform.position = newPos;
 
@@ -972,11 +984,78 @@ public class DichopticMovieSceneManager : MonoBehaviour
         statsDb?.Close();
     }
 
+    private void UpdateGazeFollow()
+    {
+        if (!gazeFollowEnabled || !isCameraInit || !Camera.main || moviePlayerObject == null) return;
+        // Don't follow gaze while settings menu is open
+        if (settingsUI != null && settingsUI.activeSelf) { gazeOffTimer = 0f; return; }
+
+        Vector3 camForward = Camera.main.transform.forward;
+
+        // Direction from camera to screen
+        Vector3 toScreen = (moviePlayerObject.transform.position - Camera.main.transform.position).normalized;
+
+        float angle = Vector3.Angle(camForward, toScreen);
+
+        if (angle > GAZE_THRESHOLD_ANGLE)
+        {
+            gazeOffTimer += Time.deltaTime;
+            if (gazeOffTimer > GAZE_FOLLOW_DELAY)
+            {
+                // Smoothly rotate screenBaseDirection toward camera gaze (horizontal component)
+                Vector3 gazeFlat = camForward;
+                gazeFlat.y = 0f;
+                if (gazeFlat.sqrMagnitude > 0.001f)
+                    gazeFlat.Normalize();
+                else
+                    gazeFlat = screenBaseDirection;
+
+                screenBaseDirection = Vector3.Slerp(screenBaseDirection, gazeFlat, Time.deltaTime * GAZE_FOLLOW_SPEED).normalized;
+
+                // Also adjust tilt toward vertical gaze angle
+                float gazeVerticalAngle = Mathf.Asin(Mathf.Clamp(camForward.y, -1f, 1f)) * Mathf.Rad2Deg;
+                screenTiltAngle = Mathf.Lerp(screenTiltAngle, gazeVerticalAngle, Time.deltaTime * GAZE_FOLLOW_SPEED);
+                screenTiltAngle = Mathf.Clamp(screenTiltAngle, -90f, 90f);
+
+                // Reposition screen with new direction and tilt
+                RepositionScreenFromBase();
+            }
+        }
+        else
+        {
+            gazeOffTimer = 0f;
+        }
+    }
+
+    private void RepositionScreenFromBase()
+    {
+        if (!Camera.main || moviePlayerObject == null) return;
+
+        Vector3 origin = Camera.main.transform.position;
+        float tiltRad = screenTiltAngle * Mathf.Deg2Rad;
+        float horizontalDist = DISTANCE_TO_SCREEN_IN_M * Mathf.Cos(tiltRad);
+        float verticalOffset = DISTANCE_TO_SCREEN_IN_M * Mathf.Sin(tiltRad);
+
+        Vector3 newPos = origin + screenBaseDirection * horizontalDist;
+        newPos.y = origin.y + verticalOffset;
+        moviePlayerObject.transform.position = newPos;
+
+        // Update tilt text
+        if (tiltText != null)
+            tiltText.text = screenTiltAngle.ToString("0") + "°";
+    }
+
     private void UpdateCamera()
     {
         if (!isCameraInit)
         {
             if (!Camera.main) return;
+            // Initialize screenBaseDirection from camera
+            screenBaseDirection = Camera.main.transform.forward;
+            screenBaseDirection.y = 0f;
+            if (screenBaseDirection.sqrMagnitude < 0.001f) screenBaseDirection = Vector3.forward;
+            screenBaseDirection.Normalize();
+
             MoveScreenToDistance();
         }
 
@@ -992,7 +1071,6 @@ public class DichopticMovieSceneManager : MonoBehaviour
                 Quaternion tilt = Quaternion.AngleAxis(-screenTiltAngle, screenRight);
                 moviePlayerObject.transform.rotation = tilt * faceCamera;
             }
-
         }
     }
 }
