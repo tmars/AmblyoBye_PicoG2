@@ -10,6 +10,7 @@ using System;
 public class DichopticMovieSceneManager : MonoBehaviour
 {
     private float DISTANCE_TO_SCREEN_IN_M = 2.0f;
+    private float screenTiltAngle = 0f; // degrees, positive = up, negative = down
     private string EMPTY_MOVIE_NAME = "";
 
     public static DichopticMovieSceneManager Instance;
@@ -55,6 +56,9 @@ public class DichopticMovieSceneManager : MonoBehaviour
 
     [SerializeField]
     public TextMeshProUGUI distanceText;
+
+    [SerializeField]
+    public TextMeshProUGUI tiltText;
 
     [SerializeField]
     public TextMeshProUGUI ipdText;
@@ -539,6 +543,19 @@ public class DichopticMovieSceneManager : MonoBehaviour
         MoveScreenToDistance();
     }
 
+    // ---- Screen tilt controls (arc up/down) ----
+    public void ScreenTiltUp()
+    {
+        screenTiltAngle = Mathf.Min(90f, screenTiltAngle + 15f);
+        MoveScreenToDistance();
+    }
+
+    public void ScreenTiltDown()
+    {
+        screenTiltAngle = Mathf.Max(-90f, screenTiltAngle - 15f);
+        MoveScreenToDistance();
+    }
+
     private void MoveScreenToDistance()
     {
         // Use Pvr_UnitySDK root as stable reference (doesn't move with head tracking)
@@ -556,23 +573,41 @@ public class DichopticMovieSceneManager : MonoBehaviour
             if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
             forward = forward.normalized;
 
-            Vector3 newPos = origin + forward * DISTANCE_TO_SCREEN_IN_M;
-            newPos.y = origin.y;
+            // Apply tilt: move along an arc (same radius, different vertical angle)
+            float tiltRad = screenTiltAngle * Mathf.Deg2Rad;
+            float horizontalDist = DISTANCE_TO_SCREEN_IN_M * Mathf.Cos(tiltRad);
+            float verticalOffset = DISTANCE_TO_SCREEN_IN_M * Mathf.Sin(tiltRad);
+
+            Vector3 newPos = origin + forward * horizontalDist;
+            newPos.y = origin.y + verticalOffset;
             moviePlayerObject.transform.position = newPos;
+
+            // Screen faces the viewer (look from screen toward origin)
+            Vector3 lookDir = origin - newPos;
+            if (lookDir.sqrMagnitude > 0.001f)
+                moviePlayerObject.transform.rotation = Quaternion.LookRotation(lookDir, Vector3.up);
 
             // Move settings canvas slightly in front of screen
             if (settingsUI != null)
             {
-                Vector3 canvasPos = origin + forward * (DISTANCE_TO_SCREEN_IN_M - 0.05f);
-                canvasPos.y = origin.y;
+                float canvasDist = DISTANCE_TO_SCREEN_IN_M - 0.05f;
+                float canvasH = canvasDist * Mathf.Cos(tiltRad);
+                float canvasV = canvasDist * Mathf.Sin(tiltRad);
+                Vector3 canvasPos = origin + forward * canvasH;
+                canvasPos.y = origin.y + canvasV;
                 settingsUI.transform.position = canvasPos;
+
+                Vector3 canvasLookDir = origin - canvasPos;
+                if (canvasLookDir.sqrMagnitude > 0.001f)
+                    settingsUI.transform.rotation = Quaternion.LookRotation(canvasLookDir, Vector3.up);
             }
 
             isCameraInit = true;
-            Debug.Log("[DichopticScene] Screen moved to distance: " + DISTANCE_TO_SCREEN_IN_M + "m");
         }
         if (distanceText != null)
             distanceText.text = DISTANCE_TO_SCREEN_IN_M.ToString("0.00") + "m";
+        if (tiltText != null)
+            tiltText.text = screenTiltAngle.ToString("0") + "°";
     }
 
     // ---- IPD controls ----
@@ -949,8 +984,12 @@ public class DichopticMovieSceneManager : MonoBehaviour
                 forwardFlat = Camera.main.transform.forward;
             }
 
-            Vector3 p2 = Camera.main.transform.position + forwardFlat * DISTANCE_TO_SCREEN_IN_M;
-            p2.y = Camera.main.transform.position.y;
+            float tiltRad = screenTiltAngle * Mathf.Deg2Rad;
+            float hDist = DISTANCE_TO_SCREEN_IN_M * Mathf.Cos(tiltRad);
+            float vOffset = DISTANCE_TO_SCREEN_IN_M * Mathf.Sin(tiltRad);
+
+            Vector3 p2 = Camera.main.transform.position + forwardFlat * hDist;
+            p2.y = Camera.main.transform.position.y + vOffset;
             moviePlayerObject.transform.position = p2;
 
             isCameraInit = true;
@@ -959,7 +998,6 @@ public class DichopticMovieSceneManager : MonoBehaviour
         if (Camera.main)
         {
             Vector3 lookDir = moviePlayerObject.transform.position - Camera.main.transform.position;
-            lookDir.y = 0f;
             if (lookDir.sqrMagnitude > 0.001f)
             {
                 moviePlayerObject.transform.rotation = Quaternion.LookRotation(lookDir, Vector3.up);

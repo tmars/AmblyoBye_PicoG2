@@ -352,8 +352,35 @@ public class SceneBuilderAndBuild
             distFartherComp.onClick,
             new UnityEngine.Events.UnityAction(sceneManager.ScreenFarther));
 
+        // ---- Screen Tilt Controls ----
+        float tiltY = -240f;
+        var tiltLabel = CreateTMPText("TiltLabel", panel.transform, "Tilt", 16,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(-120, tiltY), new Vector2(100, 35));
+        tiltLabel.alignment = TextAlignmentOptions.MidlineRight;
+
+        var tiltDownBtn = CreateButton("ScreenTiltDown", "Down", panel.transform,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(-40, tiltY), new Vector2(90, 35));
+        tiltDownBtn.GetComponent<Image>().color = new Color(0.3f, 0.3f, 0.5f, 1f);
+        var tiltDownComp = tiltDownBtn.GetComponent<Button>();
+        UnityEditor.Events.UnityEventTools.AddPersistentListener(
+            tiltDownComp.onClick,
+            new UnityEngine.Events.UnityAction(sceneManager.ScreenTiltDown));
+
+        var tiltTextObj = CreateTMPText("TiltText", panel.transform, "0°", 18,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(50, tiltY), new Vector2(100, 35));
+        tiltTextObj.alignment = TextAlignmentOptions.Center;
+        sceneManager.tiltText = tiltTextObj;
+
+        var tiltUpBtn = CreateButton("ScreenTiltUp", "Up", panel.transform,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(140, tiltY), new Vector2(90, 35));
+        tiltUpBtn.GetComponent<Image>().color = new Color(0.3f, 0.3f, 0.5f, 1f);
+        var tiltUpComp = tiltUpBtn.GetComponent<Button>();
+        UnityEditor.Events.UnityEventTools.AddPersistentListener(
+            tiltUpComp.onClick,
+            new UnityEngine.Events.UnityAction(sceneManager.ScreenTiltUp));
+
         // ---- Send Stats Button ----
-        float sendStatsY = -245f;
+        float sendStatsY = -285f;
         var sendStatsBtn = CreateButton("SendStatsButton", "Send Stats to TG", panel.transform,
             new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, sendStatsY), new Vector2(220, 35));
         sendStatsBtn.GetComponent<Image>().color = new Color(0.2f, 0.4f, 0.55f, 1f);
