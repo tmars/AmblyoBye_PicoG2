@@ -110,6 +110,20 @@ public class DichopticMovieSceneManager : MonoBehaviour
 
     void Start()
     {
+        // Parent settings canvas to movie screen so it follows position/rotation automatically
+        if (settingsUI != null && moviePlayerObject != null)
+        {
+            Vector3 savedScale = settingsUI.transform.lossyScale;
+            settingsUI.transform.SetParent(moviePlayerObject.transform, true);
+            // Compensate parent scale to preserve canvas world scale
+            Vector3 parentScale = moviePlayerObject.transform.lossyScale;
+            settingsUI.transform.localScale = new Vector3(
+                savedScale.x / parentScale.x,
+                savedScale.y / parentScale.y,
+                savedScale.z / parentScale.z);
+            settingsUI.transform.localPosition = new Vector3(0f, 0f, -0.01f); // slightly in front
+        }
+
         versionTextBox.text = "v" + Application.version;
         UpdateTimeWatchedText(0);
         RestoreInitialSettingsFromPersistance();
@@ -549,12 +563,14 @@ public class DichopticMovieSceneManager : MonoBehaviour
     {
         screenTiltAngle = Mathf.Min(90f, screenTiltAngle + 5f);
         MoveScreenToDistance();
+        Debug.Log("[TILT] angle=" + screenTiltAngle + " pos=" + moviePlayerObject.transform.position + " euler=" + moviePlayerObject.transform.eulerAngles);
     }
 
     public void ScreenTiltDown()
     {
         screenTiltAngle = Mathf.Max(-90f, screenTiltAngle - 5f);
         MoveScreenToDistance();
+        Debug.Log("[TILT] angle=" + screenTiltAngle + " pos=" + moviePlayerObject.transform.position + " euler=" + moviePlayerObject.transform.eulerAngles);
     }
 
     private void MoveScreenToDistance()
@@ -574,16 +590,19 @@ public class DichopticMovieSceneManager : MonoBehaviour
             if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
             forward = forward.normalized;
 
-            // Apply tilt: move along an arc (same radius, different vertical angle)
+            // Position: move along arc (same distance from viewer, different height)
             float tiltRad = screenTiltAngle * Mathf.Deg2Rad;
             float horizontalDist = DISTANCE_TO_SCREEN_IN_M * Mathf.Cos(tiltRad);
             float verticalOffset = DISTANCE_TO_SCREEN_IN_M * Mathf.Sin(tiltRad);
-
             Vector3 newPos = origin + forward * horizontalDist;
             newPos.y = origin.y + verticalOffset;
             moviePlayerObject.transform.position = newPos;
 
-            // Rotation and settings canvas positioning handled by UpdateCamera every frame
+            // Rotation: face camera horizontally, then tilt around screen's right axis
+            Quaternion faceCamera = Quaternion.LookRotation(forward, Vector3.up);
+            Vector3 screenRight = faceCamera * Vector3.right;
+            Quaternion tilt = Quaternion.AngleAxis(-screenTiltAngle, screenRight);
+            moviePlayerObject.transform.rotation = tilt * faceCamera;
 
             isCameraInit = true;
         }
@@ -957,48 +976,23 @@ public class DichopticMovieSceneManager : MonoBehaviour
     {
         if (!isCameraInit)
         {
-            if (!Camera.main)
-            {
-                return;
-            }
-
-            Vector3 forwardFlat = Vector3.ProjectOnPlane(Camera.main.transform.forward, Vector3.up).normalized;
-            if (forwardFlat.sqrMagnitude < 0.001f)
-            {
-                forwardFlat = Camera.main.transform.forward;
-            }
-
-            float tiltRad = screenTiltAngle * Mathf.Deg2Rad;
-            float hDist = DISTANCE_TO_SCREEN_IN_M * Mathf.Cos(tiltRad);
-            float vOffset = DISTANCE_TO_SCREEN_IN_M * Mathf.Sin(tiltRad);
-
-            Vector3 p2 = Camera.main.transform.position + forwardFlat * hDist;
-            p2.y = Camera.main.transform.position.y + vOffset;
-            moviePlayerObject.transform.position = p2;
-
-            isCameraInit = true;
+            if (!Camera.main) return;
+            MoveScreenToDistance();
         }
 
-        if (Camera.main)
+        if (Camera.main && moviePlayerObject != null)
         {
-            // Base rotation: face camera horizontally (ignore vertical)
-            Vector3 flatLookDir = moviePlayerObject.transform.position - Camera.main.transform.position;
-            flatLookDir.y = 0f;
-            if (flatLookDir.sqrMagnitude > 0.001f)
+            // Face camera horizontally + apply tilt
+            Vector3 toScreen = moviePlayerObject.transform.position - Camera.main.transform.position;
+            toScreen.y = 0f;
+            if (toScreen.sqrMagnitude > 0.001f)
             {
-                Quaternion baseRot = Quaternion.LookRotation(flatLookDir, Vector3.up);
-                // Apply tilt: rotate around screen's local X axis (pitch backward)
-                Quaternion tiltRot = Quaternion.AngleAxis(-screenTiltAngle, Vector3.right);
-                moviePlayerObject.transform.rotation = baseRot * tiltRot;
+                Quaternion faceCamera = Quaternion.LookRotation(toScreen.normalized, Vector3.up);
+                Vector3 screenRight = faceCamera * Vector3.right;
+                Quaternion tilt = Quaternion.AngleAxis(-screenTiltAngle, screenRight);
+                moviePlayerObject.transform.rotation = tilt * faceCamera;
             }
 
-            // Settings canvas follows screen every frame
-            if (settingsUI != null)
-            {
-                Vector3 toViewer = -moviePlayerObject.transform.forward;
-                settingsUI.transform.position = moviePlayerObject.transform.position + toViewer * 0.01f;
-                settingsUI.transform.rotation = moviePlayerObject.transform.rotation;
-            }
         }
     }
 }
