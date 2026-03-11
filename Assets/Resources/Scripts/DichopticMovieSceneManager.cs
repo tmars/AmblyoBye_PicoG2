@@ -981,20 +981,21 @@ public class DichopticMovieSceneManager : MonoBehaviour
 
         if (Camera.main)
         {
-            Vector3 lookDir = moviePlayerObject.transform.position - Camera.main.transform.position;
-            if (lookDir.sqrMagnitude > 0.001f)
+            // Base rotation: face camera horizontally (ignore vertical)
+            Vector3 flatLookDir = moviePlayerObject.transform.position - Camera.main.transform.position;
+            flatLookDir.y = 0f;
+            if (flatLookDir.sqrMagnitude > 0.001f)
             {
-                // Screen must be perpendicular to the look direction.
-                // Use a tilted "up" vector so the screen face is normal to the view ray.
-                Vector3 right = Vector3.Cross(Vector3.up, lookDir).normalized;
-                Vector3 screenUp = Vector3.Cross(lookDir, right).normalized;
-                moviePlayerObject.transform.rotation = Quaternion.LookRotation(lookDir, screenUp);
+                Quaternion baseRot = Quaternion.LookRotation(flatLookDir, Vector3.up);
+                // Apply tilt: rotate around screen's local X axis (pitch backward)
+                Quaternion tiltRot = Quaternion.AngleAxis(-screenTiltAngle, Vector3.right);
+                moviePlayerObject.transform.rotation = baseRot * tiltRot;
             }
 
             // Settings canvas follows screen every frame
             if (settingsUI != null)
             {
-                Vector3 toViewer = (Camera.main.transform.position - moviePlayerObject.transform.position).normalized;
+                Vector3 toViewer = -moviePlayerObject.transform.forward;
                 settingsUI.transform.position = moviePlayerObject.transform.position + toViewer * 0.01f;
                 settingsUI.transform.rotation = moviePlayerObject.transform.rotation;
             }
